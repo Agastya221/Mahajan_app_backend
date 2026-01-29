@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx prisma:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(wc:*)",
+      "Bash(npm ls:*)",
+      "Bash(docker compose:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(dir:*)"
+    ]
+  }
+}
