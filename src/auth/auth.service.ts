@@ -10,21 +10,18 @@ import { msg91Service } from './msg91.service';
 import { logger } from '../utils/logger';
 
 export class AuthService {
-  // ─── OTP Flow ────────────────────────────────────────────
+  // ─── Widget-based OTP verification ───────────────────────
+  //
+  // Flow:
+  // 1. Frontend loads MSG91 widget (widgetId configured in HTML)
+  // 2. User enters phone → widget sends OTP
+  // 3. User enters OTP → widget verifies and returns JWT access token
+  // 4. Frontend sends access token to POST /auth/verify-widget-token
+  // 5. Backend verifies token with MSG91 and returns app tokens
 
-  async sendOtp(phone: string) {
-    await msg91Service.sendOTP(phone);
-    return { message: 'OTP sent successfully' };
-  }
-
-  async resendOtp(phone: string, retryType?: 'voice' | 'text') {
-    await msg91Service.resendOTP(phone, retryType);
-    return { message: 'OTP resent successfully' };
-  }
-
-  async verifyOtp(phone: string, otp: string, deviceInfo?: string) {
-    // Verify OTP via MSG91
-    await msg91Service.verifyOTP(phone, otp);
+  async verifyWidgetToken(widgetAccessToken: string, deviceInfo?: string) {
+    // Verify the access token from MSG91 widget
+    const { phone } = await msg91Service.verifyWidgetToken(widgetAccessToken);
 
     // Check if user already exists
     const user = await prisma.user.findUnique({
@@ -65,6 +62,7 @@ export class AuthService {
 
     return {
       isNewUser: true,
+      phone,
       verificationToken,
     };
   }

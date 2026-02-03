@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="js/app.js"></script>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen pb-20">
+
+    <header class="bg-indigo-600 text-white p-4 shadow sticky top-0 z-10 flex justify-between items-center">
+        <div>
+            <h1 class="font-bold text-lg">Driver App</h1>
+            <p class="text-xs text-indigo-200" id="user-name">Welcome</p>
+        </div>
+        <button onclick="State.clearAuth()" class="bg-indigo-800 text-xs px-3 py-1 rounded">Logout</button>
+    </header>
+
+    <main class="p-4 space-y-4">
+
+        <!-- Simulation Control -->
+        <div id="simulation-controls" class="hidden bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+            <h3 class="font-bold text-yellow-800 text-sm mb-2">🚚 Driving Simulator</h3>
+            <div class="flex items-center justify-between">
+                <span id="sim-status" class="text-xs text-gray-600">Inactive</span>
+                <button id="btn-sim" onclick="toggleSimulation()"
+                    class="bg-green-600 text-white px-4 py-2 rounded text-sm font-bold shadow">Start Driving</button>
+            </div>
+            <p class="text-[10px] text-gray-500 mt-2">Sends GPS updates every 3s to backend</p>
+        </div>
+
+        <!-- Trips List -->
+        <div id="trips-container" class="space-y-4">
+            <p class="text-center text-gray-400 mt-10">Loading trips...</p>
+        </div>
+
+    </main>
+
+    <!-- Chat Modal (Simple Overlay) -->
+    <div id="chat-modal" class="hidden fixed inset-0 bg-white z-50 flex flex-col">
+        <div class="bg-indigo-600 text-white p-4 flex justify-between items-center shrink-0">
+            <h3 class="font-bold">Chat with Admin</h3>
+            <button onclick="closeChat()" class="text-white text-xl">&times;</button>
+        </div>
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50"></div>
+        <div class="p-4 border-t bg-white shrink-0">
+            <form onsubmit="sendChatMessage(event)" class="flex gap-2">
+                <input id="chat-input" class="flex-1 border p-2 rounded-full" placeholder="Message...">
+                <button type="submit"
+                    class="bg-indigo-600 text-white p-2 rounded-full w-10 h-10 flex items-center justify-center">➤</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentTripId = null;
+        let activeThreadId = null;
+        let simInterval = null;
+        let myDriverId = null; // Captured from trip data
+
+        // Mock Route (Mumbai to Pune approx)
+        let simLat = 19.0760;
+        let simLng = 72.8777;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!State.token) window.location.href = 'index.html';
+            document.getElementById('user-name').textContent = State.user?.name || 'Driver';
+            Socket.connect();
+            loadMyTrips();
+        });
+
+        async function loadMyTrips() {
+            try {
+                const res = await API.trips.list();
+                const trips = res.data.trips;
+
+                // Capture Driver ID from first trip available
+                if (trips.length > 0 && trips[0].driverId) {
+                    myDriverId = trips[0].driverId;
+                    console.log("Driver ID captured:", myDriverId);
+                }
+
+                UI.renderList('trips-container', trips, tripCard, "No trips assigned");
+            } catch (e) { }
+        }
+
+        const tripCard = (trip) => {
+            return `
+            <div class="bg-white rounded-xl shadow p-4 border-l-4 ${trip.status === 'IN_TRANSIT' ? 'border-green-500' : 'border-gray-300'}">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-sm font-bold text-gray-800">Trip #${trip.tripNumber || trip.id.substr(0, 4)}</span>
+                    <span class="text-xs px-2 py-1 bg-gray-100 rounded font-bold">${trip.status}</span>
+                </div>
+                <div class="text-xs text-gray-500 mb-4">
+                    Truck: <b>${trip.truck?.registrationNumber || 'N/A'}</b>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    ${getActionButton(trip)}
+                    <button onclick="openChat('${trip.id}')" class="bg-indigo-50 text-indigo-600 py-2 rounded-lg text-sm font-medium">💬 Chat</button>
+                </div>
+            </div>`;
+        };
+
+        function getActionButton(trip) {
+            if (trip.status === 'PLANNED') {
+                return `<button onclick="updateStatus('${trip.id}', 'IN_TRANSIT')" class="bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">Start Trip</button>`;
+            } else if (trip.status === 'IN_TRANSIT') {
+                // Show Sim controls only for active trip
+                if (currentTripId !== trip.id) {
+                    currentTripId = trip.id;
+                    document.getElementById('simulation-controls').classList.remove('hidden');
+                }
+                return `<button onclick="updateStatus('${trip.id}', 'COMPLETED')" class="bg-green-600 text-white py-2 rounded-lg text-sm font-medium">Complete</button>`;
+            } else {
+                return `<button disabled class="bg-gray-100 text-gray-400 py-2 rounded-lg text-sm font-medium cursor-not-allowed">Done</button>`;
+            }
+        }
+
+        async function updateStatus(id, status) {
+            if (!confirm(`Mark trip as ${status}?`)) return;
+            try {
+                // Initial location update
+                await API.trips.updateStatus(id, status, simLat, simLng);
+                loadMyTrips();
+                if (status === 'COMPLETED') {
+                    stopSimulation();
+                    document.getElementById('simulation-controls').classList.add('hidden');
+                }
+            } catch (e) { }
+        }
+
+        // --- SIMULATION ---
+        function toggleSimulation() {
+            if (simInterval) {
+                stopSimulation();
+            } else {
+                startSimulation();
+            }
+        }
+
+        function startSimulation() {
+            if (!currentTripId || !myDriverId) {
+                UI.showToast("Cannot track: No active trip or Driver ID found (Refresh page)", "error");
+                return;
+            }
+
+            const btn = document.getElementById('btn-sim');
+            btn.textContent = "Stop Driving";
+            btn.classList.add('bg-red-600');
+            btn.classList.remove('bg-green-600');
+            document.getElementById('sim-status').textContent = "Driving (Broadcasting...)";
+
+            simInterval = setInterval(async () => {
+                // Move somewhat South-East towards Pune
+                simLat -= 0.0005 + (Math.random() * 0.0001);
+                simLng += 0.0005 + (Math.random() * 0.0001);
+
+                try {
+                    const payload = {
+                        tripId: currentTripId,
+                        driverId: myDriverId,
+                        locations: [{
+                            latitude: simLat,
+                            longitude: simLng,
+                            timestamp: new Date().toISOString(),
+                            speed: 60, // km/h
+                            heading: 135 // SE
+                        }]
+                    };
+
+                    await API.tracking.ping(payload);
+                    console.log(`Ping sent: ${simLat.toFixed(4)}, ${simLng.toFixed(4)}`);
+                } catch (e) {
+                    console.error("Ping failed", e);
+                    // Don't alert user every 3s, just log
+                }
+
+            }, 3000);
+        }
+
+        function stopSimulation() {
+            if (simInterval) clearInterval(simInterval);
+            simInterval = null;
+            const btn = document.getElementById('btn-sim');
+            btn.textContent = "Start Driving";
+            btn.classList.remove('bg-red-600');
+            btn.classList.add('bg-green-600');
+            document.getElementById('sim-status').textContent = "Inactive";
+        }
+
+        // --- CHAT ---
+        async function openChat(tripId) {
+            document.getElementById('chat-modal').classList.remove('hidden');
+            // Try to find thread for this trip
+            try {
+                const res = await API.chat.getThreads();
+                const thread = res.data.find(t => t.tripId === tripId);
+
+                if (thread) {
+                    activeThreadId = thread.id;
+                    Socket.joinChat(activeThreadId);
+                    loadMessages();
+                } else {
+                    // Create if not exists
+                    const createRes = await API.chat.createThread({ tripId, title: "Trip Chat" });
+                    activeThreadId = createRes.data.id;
+                    Socket.joinChat(activeThreadId);
+                    loadMessages();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function closeChat() {
+            document.getElementById('chat-modal').classList.add('hidden');
+            if (activeThreadId) Socket.leaveChat(activeThreadId);
+            activeThreadId = null;
+        }
+
+        async function loadMessages() {
+            if (!activeThreadId) return;
+            const res = await API.chat.getMessages(activeThreadId);
+            renderMessages(res.data.messages.reverse());
+        }
+
+        function renderMessages(msgs) {
+            const container = document.getElementById('chat-messages');
+            const myId = State.user.id;
+            container.innerHTML = msgs.map(m => `
+                <div class="flex ${m.senderId === myId ? 'justify-end' : 'justify-start'}">
+                    <div class="px-3 py-2 rounded-lg text-sm max-w-[80%] ${m.senderId === myId ? 'bg-indigo-600 text-white' : 'bg-white border text-gray-800'}">
+                        ${m.content}
+                    </div>
+                </div>
+            `).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function sendChatMessage(e) {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            const content = input.value.trim();
+            if (!activeThreadId || !content) return;
+            try {
+                await API.chat.sendMessage(activeThreadId, content);
+                input.value = '';
+                loadMessages(); // Refresh. Better: listen to socket
+            } catch (e) { }
+        }
+
+    </script>
+</body>
+
+</html>

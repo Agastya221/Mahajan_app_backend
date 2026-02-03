@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Trip Tracking Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 20px; color: #38bdf8; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #334155;
+    }
+    .card h2 { color: #94a3b8; font-size: 14px; text-transform: uppercase; margin-bottom: 15px; }
+
+    .form-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 12px; }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
+    }
+    input:focus, select:focus { outline: none; border-color: #38bdf8; }
+
+    .btn {
+      padding: 10px 20px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-success { background: #22c55e; color: white; }
+    .btn-success:hover { background: #16a34a; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-secondary { background: #475569; color: white; }
+    .btn-secondary:hover { background: #334155; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-live { background: #22c55e; color: white; }
+    .status-recent { background: #eab308; color: black; }
+    .status-stale { background: #f97316; color: white; }
+    .status-offline { background: #ef4444; color: white; }
+    .status-disconnected { background: #6b7280; color: white; }
+
+    .location-info {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
+    }
+    .location-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #1e293b;
+    }
+    .location-row:last-child { border-bottom: none; }
+    .location-label { color: #94a3b8; }
+    .location-value { color: #e2e8f0; font-weight: 500; }
+
+    .log-container {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 15px;
+      height: 300px;
+      overflow-y: auto;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+    }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+    .log-time { color: #64748b; }
+    .log-event { color: #38bdf8; }
+    .log-data { color: #a3e635; }
+    .log-error { color: #ef4444; }
+
+    .map-container {
+      height: 400px;
+      background: #1e293b;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #64748b;
+      position: relative;
+      overflow: hidden;
+    }
+    .map-placeholder {
+      text-align: center;
+    }
+    .coordinates-display {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    #connectionStatus {
+      text-align: center;
+      padding: 10px;
+      margin-bottom: 20px;
+      border-radius: 8px;
+    }
+    .connected { background: #166534; }
+    .disconnected { background: #991b1b; }
+
+    .trip-selector { margin-bottom: 20px; }
+    .trip-option {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .trip-option:hover { border-color: #38bdf8; }
+    .trip-option.selected { border-color: #3b82f6; background: #1e3a5f; }
+    .trip-option h3 { color: #e2e8f0; margin-bottom: 5px; }
+    .trip-option p { color: #64748b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚚 Live Trip Tracking Test</h1>
+
+    <div id="connectionStatus" class="disconnected">
+      WebSocket: Disconnected
+    </div>
+
+    <div class="grid">
+      <!-- Left Column: Controls -->
+      <div>
+        <div class="card">
+          <h2>1. Authentication</h2>
+          <div class="form-group">
+            <label>Access Token (from OTP login)</label>
+            <input type="text" id="accessToken" placeholder="Paste your JWT token here">
+          </div>
+          <button class="btn btn-primary" onclick="connectWebSocket()">Connect WebSocket</button>
+          <button class="btn btn-secondary" onclick="disconnectWebSocket()">Disconnect</button>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <h2>2. Select Trip to Track</h2>
+          <div class="form-group">
+            <label>Trip ID</label>
+            <input type="text" id="tripId" placeholder="Enter trip ID or load from seed data">
+          </div>
+          <button class="btn btn-primary" onclick="subscribeToTrip()">Subscribe to Trip</button>
+          <button class="btn btn-secondary" onclick="unsubscribeFromTrip()">Unsubscribe</button>
+          <button class="btn btn-secondary" onclick="loadTrips()">Load Trips</button>
+
+          <div id="tripsList" class="trip-selector" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <h2>3. Mock Location Simulator</h2>
+          <p style="color: #64748b; font-size: 12px; margin-bottom: 15px;">
+            Start/stop simulated driver movement for testing
+          </p>
+          <div class="form-group">
+            <label>Update Interval (ms)</label>
+            <input type="number" id="interval" value="3000" min="1000" max="10000">
+          </div>
+          <button class="btn btn-success" onclick="startMockLocation()">▶ Start Simulation</button>
+          <button class="btn btn-danger" onclick="stopMockLocation()">■ Stop Simulation</button>
+          <button class="btn btn-secondary" onclick="getSimulationStatus()">Status</button>
+        </div>
+      </div>
+
+      <!-- Right Column: Live Data -->
+      <div>
+        <div class="card">
+          <h2>Live Location Data</h2>
+          <div id="signalStatus">
+            <span class="status-badge status-disconnected">No Data</span>
+          </div>
+
+          <div class="location-info" id="locationInfo">
+            <div class="location-row">
+              <span class="location-label">Trip ID</span>
+              <span class="location-value" id="loc-tripId">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Driver</span>
+              <span class="location-value" id="loc-driver">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Truck</span>
+              <span class="location-value" id="loc-truck">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Latitude</span>
+              <span class="location-value" id="loc-lat">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Longitude</span>
+              <span class="location-value" id="loc-lng">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Speed</span>
+              <span class="location-value" id="loc-speed">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Heading</span>
+              <span class="location-value" id="loc-heading">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Accuracy</span>
+              <span class="location-value" id="loc-accuracy">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Last Updated</span>
+              <span class="location-value" id="loc-timestamp">-</span>
+            </div>
+            <div class="location-row">
+              <span class="location-label">Route Progress</span>
+              <span class="location-value" id="loc-progress">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <h2>Map View</h2>
+          <div class="map-container" id="mapContainer">
+            <div class="map-placeholder">
+              <p>📍 Map visualization</p>
+              <p style="font-size: 12px; margin-top: 5px;">
+                Coordinates will appear here when tracking
+              </p>
+            </div>
+            <div class="coordinates-display" id="coordsDisplay" style="display: none;">
+              Lat: <span id="map-lat">-</span><br>
+              Lng: <span id="map-lng">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <h2>Event Log</h2>
+          <div class="log-container" id="logContainer"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO Client -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <script>
+    const API_BASE = 'http://localhost:3000';
+    let socket = null;
+    let currentTripId = null;
+
+    // Logging
+    function log(type, message, data = null) {
+      const container = document.getElementById('logContainer');
+      const time = new Date().toLocaleTimeString();
+
+      let html = `<div class="log-entry">`;
+      html += `<span class="log-time">[${time}]</span> `;
+      html += `<span class="log-${type}">${message}</span>`;
+      if (data) {
+        html += `<br><span class="log-data">${JSON.stringify(data, null, 2)}</span>`;
+      }
+      html += `</div>`;
+
+      container.innerHTML = html + container.innerHTML;
+
+      // Keep only last 100 entries
+      const entries = container.querySelectorAll('.log-entry');
+      if (entries.length > 100) {
+        entries[entries.length - 1].remove();
+      }
+    }
+
+    // WebSocket Connection
+    function connectWebSocket() {
+      const token = document.getElementById('accessToken').value.trim();
+
+      if (!token) {
+        alert('Please enter an access token');
+        return;
+      }
+
+      if (socket) {
+        socket.disconnect();
+      }
+
+      log('event', 'Connecting to WebSocket...');
+
+      socket = io(API_BASE, {
+        auth: { token },
+        transports: ['websocket'],
+      });
+
+      socket.on('connect', () => {
+        log('event', 'WebSocket connected!', { socketId: socket.id });
+        updateConnectionStatus(true);
+      });
+
+      socket.on('disconnect', (reason) => {
+        log('event', 'WebSocket disconnected', { reason });
+        updateConnectionStatus(false);
+      });
+
+      socket.on('connect_error', (error) => {
+        log('error', 'Connection error', { message: error.message });
+        updateConnectionStatus(false);
+      });
+
+      socket.on('error', (error) => {
+        log('error', 'Socket error', error);
+      });
+
+      // Tracking events
+      socket.on('tracking:subscribed', (data) => {
+        log('event', 'Subscribed to trip tracking', data);
+      });
+
+      socket.on('tracking:unsubscribed', (data) => {
+        log('event', 'Unsubscribed from trip tracking', data);
+      });
+
+      socket.on('tracking:location-update', (data) => {
+        log('data', 'Location update received', data);
+        updateLocationDisplay(data);
+      });
+    }
+
+    function disconnectWebSocket() {
+      if (socket) {
+        socket.disconnect();
+        socket = null;
+        log('event', 'Disconnected from WebSocket');
+        updateConnectionStatus(false);
+      }
+    }
+
+    function updateConnectionStatus(connected) {
+      const statusEl = document.getElementById('connectionStatus');
+      statusEl.className = connected ? 'connected' : 'disconnected';
+      statusEl.textContent = connected ? 'WebSocket: Connected ✓' : 'WebSocket: Disconnected';
+    }
+
+    // Trip Subscription
+    function subscribeToTrip() {
+      const tripId = document.getElementById('tripId').value.trim();
+
+      if (!tripId) {
+        alert('Please enter a Trip ID');
+        return;
+      }
+
+      if (!socket || !socket.connected) {
+        alert('Please connect to WebSocket first');
+        return;
+      }
+
+      currentTripId = tripId;
+      socket.emit('tracking:subscribe', { tripId });
+      log('event', `Subscribing to trip: ${tripId}`);
+    }
+
+    function unsubscribeFromTrip() {
+      if (!currentTripId || !socket) return;
+
+      socket.emit('tracking:unsubscribe', { tripId: currentTripId });
+      log('event', `Unsubscribed from trip: ${currentTripId}`);
+      currentTripId = null;
+      resetLocationDisplay();
+    }
+
+    // Load trips from API
+    async function loadTrips() {
+      const token = document.getElementById('accessToken').value.trim();
+
+      if (!token) {
+        alert('Please enter an access token first');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/trips?status=IN_TRANSIT,LOADED`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to load trips');
+        }
+
+        const data = await response.json();
+        displayTrips(data.data || data.trips || []);
+        log('event', `Loaded ${data.data?.length || 0} trips`);
+      } catch (error) {
+        log('error', 'Failed to load trips', { error: error.message });
+        // Show some sample trip IDs for testing
+        displayTrips([
+          { id: 'sample-trip-1', status: 'IN_TRANSIT', notes: 'Use the trip ID from seed data' }
+        ]);
+      }
+    }
+
+    function displayTrips(trips) {
+      const container = document.getElementById('tripsList');
+
+      if (trips.length === 0) {
+        container.innerHTML = '<p style="color: #64748b;">No active trips found. Run seed data first.</p>';
+        return;
+      }
+
+      container.innerHTML = trips.map(trip => `
+        <div class="trip-option" onclick="selectTrip('${trip.id}')">
+          <h3>${trip.status} - ${trip.id.substring(0, 8)}...</h3>
+          <p>${trip.notes || 'No description'}</p>
+        </div>
+      `).join('');
+    }
+
+    function selectTrip(tripId) {
+      document.getElementById('tripId').value = tripId;
+
+      // Update UI
+      document.querySelectorAll('.trip-option').forEach(el => {
+        el.classList.remove('selected');
+        if (el.querySelector('h3').textContent.includes(tripId.substring(0, 8))) {
+          el.classList.add('selected');
+        }
+      });
+    }
+
+    // Location Display
+    function updateLocationDisplay(data) {
+      document.getElementById('loc-tripId').textContent = data.tripId || '-';
+      document.getElementById('loc-driver').textContent = data.driverName || '-';
+      document.getElementById('loc-truck').textContent = data.truckNumber || '-';
+      document.getElementById('loc-lat').textContent = data.latitude?.toFixed(6) || '-';
+      document.getElementById('loc-lng').textContent = data.longitude?.toFixed(6) || '-';
+      document.getElementById('loc-speed').textContent = data.speed ? `${data.speed.toFixed(1)} km/h` : '-';
+      document.getElementById('loc-heading').textContent = data.heading ? `${data.heading.toFixed(0)}°` : '-';
+      document.getElementById('loc-accuracy').textContent = data.accuracy ? `±${data.accuracy.toFixed(0)}m` : '-';
+      document.getElementById('loc-timestamp').textContent = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '-';
+      document.getElementById('loc-progress').textContent = data._routeProgress || '-';
+
+      // Update signal status
+      const signalEl = document.getElementById('signalStatus');
+      signalEl.innerHTML = `<span class="status-badge status-live">Live</span>`;
+
+      // Update map coordinates
+      document.getElementById('coordsDisplay').style.display = 'block';
+      document.getElementById('map-lat').textContent = data.latitude?.toFixed(6) || '-';
+      document.getElementById('map-lng').textContent = data.longitude?.toFixed(6) || '-';
+    }
+
+    function resetLocationDisplay() {
+      ['tripId', 'driver', 'truck', 'lat', 'lng', 'speed', 'heading', 'accuracy', 'timestamp', 'progress'].forEach(id => {
+        document.getElementById(`loc-${id}`).textContent = '-';
+      });
+      document.getElementById('signalStatus').innerHTML = '<span class="status-badge status-disconnected">No Data</span>';
+      document.getElementById('coordsDisplay').style.display = 'none';
+    }
+
+    // Mock Location Controls
+    async function startMockLocation() {
+      const tripId = document.getElementById('tripId').value.trim();
+      const interval = document.getElementById('interval').value;
+
+      if (!tripId) {
+        alert('Please enter a Trip ID');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/api/dev/mock-location/start/${tripId}?interval=${interval}`, {
+          method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          log('event', 'Mock location simulation started', data);
+        } else {
+          log('error', 'Failed to start simulation', data);
+        }
+      } catch (error) {
+        log('error', 'Failed to start mock location', { error: error.message });
+      }
+    }
+
+    async function stopMockLocation() {
+      const tripId = document.getElementById('tripId').value.trim();
+
+      if (!tripId) {
+        alert('Please enter a Trip ID');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/api/dev/mock-location/stop/${tripId}`, {
+          method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          log('event', 'Mock location simulation stopped', data);
+        } else {
+          log('error', 'Failed to stop simulation', data);
+        }
+      } catch (error) {
+        log('error', 'Failed to stop mock location', { error: error.message });
+      }
+    }
+
+    async function getSimulationStatus() {
+      try {
+        const response = await fetch(`${API_BASE}/api/dev/mock-location/status`);
+        const data = await response.json();
+        log('event', 'Simulation status', data);
+      } catch (error) {
+        log('error', 'Failed to get status', { error: error.message });
+      }
+    }
+
+    // Initialize
+    log('event', 'Tracking test page loaded');
+    log('event', 'Steps: 1) Login via OTP 2) Connect WebSocket 3) Subscribe to trip 4) Start simulation');
+  </script>
+</body>
+</html>

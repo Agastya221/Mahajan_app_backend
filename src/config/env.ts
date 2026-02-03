@@ -24,8 +24,8 @@ export const config = {
 
   msg91: {
     authKey: process.env.MSG91_AUTH_KEY!,
-    templateId: process.env.MSG91_TEMPLATE_ID!,
-    otpLength: parseInt(process.env.MSG91_OTP_LENGTH || '6'),
+    widgetId: process.env.MSG91_WIDGET_ID!,
+    tokenAuth: process.env.MSG91_TOKEN_AUTH!, // Token for widget initialization
   },
 
   aws: {
@@ -50,7 +50,8 @@ const requiredEnvVars = [
   'DATABASE_URL',
   'JWT_SECRET',
   'MSG91_AUTH_KEY',
-  'MSG91_TEMPLATE_ID',
+  'MSG91_WIDGET_ID',
+  'MSG91_TOKEN_AUTH',
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'AWS_S3_BUCKET',

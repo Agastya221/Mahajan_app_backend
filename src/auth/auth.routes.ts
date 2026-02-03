@@ -6,29 +6,24 @@ const router = Router();
 const authController = new AuthController();
 
 /**
- * @route   POST /api/v1/auth/send-otp
- * @desc    Send OTP to phone number
- * @access  Public (rate-limited via app.ts)
+ * @route   GET /api/v1/auth/widget-config
+ * @desc    Get MSG91 widget configuration (widgetId, tokenAuth) for frontend initialization
+ * @access  Public
  */
-router.post('/send-otp', authController.sendOtp);
+router.get('/widget-config', authController.getWidgetConfig);
 
 /**
- * @route   POST /api/v1/auth/resend-otp
- * @desc    Resend OTP (voice or text)
+ * @route   POST /api/v1/auth/verify-widget-token
+ * @desc    Verify MSG91 widget/SDK access token
+ *          - Mobile: Use MSG91 React Native SDK, send access token here
+ *          - Web Testing: Use MSG91 Web Widget, send access token here
  * @access  Public (rate-limited via app.ts)
  */
-router.post('/resend-otp', authController.resendOtp);
-
-/**
- * @route   POST /api/v1/auth/verify-otp
- * @desc    Verify OTP - returns tokens for existing users, verificationToken for new users
- * @access  Public (rate-limited via app.ts)
- */
-router.post('/verify-otp', authController.verifyOtp);
+router.post('/verify-widget-token', authController.verifyWidgetToken);
 
 /**
  * @route   POST /api/v1/auth/register
- * @desc    Complete registration for new users (requires verificationToken from verify-otp)
+ * @desc    Complete registration for new users (requires verificationToken from verify-widget-token)
  * @access  Public
  */
 router.post('/register', authController.register);

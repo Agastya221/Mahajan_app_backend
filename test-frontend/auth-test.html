@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mahajan Auth Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .loader {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 500;
+      z-index: 1000;
+      animation: slideIn 0.3s ease;
+    }
+
+    .toast.success {
+      background: #22c55e;
+    }
+
+    .toast.error {
+      background: #ef4444;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-5xl">
+    <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Mahajan Auth Test Panel</h1>
+    <p class="text-center text-gray-500 mb-8">Test MSG91 OTP authentication (Web SDK for testing, React Native for
+      production)</p>
+
+    <!-- API Base URL Config -->
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+      <div class="flex gap-4 items-end">
+        <div class="flex-1">
+          <label class="block text-sm font-medium text-gray-700 mb-2">API Base URL</label>
+          <input type="text" id="apiBaseUrl" value="http://localhost:3000/api/v1"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <button onclick="loadWidgetConfig()" id="loadConfigBtn"
+          class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition">
+          Load Widget Config
+        </button>
+      </div>
+      <div id="widgetConfigStatus" class="mt-2 text-sm"></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-200 mb-6">
+      <button onclick="showTab('widget')" id="tab-widget"
+        class="tab-btn px-6 py-3 font-medium text-blue-600 border-b-2 border-blue-600">
+        OTP Authentication
+      </button>
+      <button onclick="showTab('tokens')" id="tab-tokens"
+        class="tab-btn px-6 py-3 font-medium text-gray-500 hover:text-gray-700">
+        Tokens & Session
+      </button>
+      <button onclick="showTab('protected')" id="tab-protected"
+        class="tab-btn px-6 py-3 font-medium text-gray-500 hover:text-gray-700">
+        Test API
+      </button>
+    </div>
+
+    <!-- Widget Auth Tab -->
+    <div id="panel-widget" class="tab-panel">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <h3 class="font-semibold text-blue-800 mb-2">MSG91 OTP Flow & React Native Integration</h3>
+        <p class="text-sm text-blue-700 mb-3">
+          This panel tests the MSG91 Web Widget. For your <strong>React Native App</strong>, share the following
+          configuration with your developer:
+        </p>
+        <div class="bg-gray-800 text-gray-200 p-3 rounded-md text-xs font-mono overflow-x-auto">
+          <pre>
+// React Native Configuration
+var configuration = {
+  widgetId: "366263666676393236353739",
+  tokenAuth: "486792Tw0DWQ1f8aqm698190ebP1",
+  identifier: "<enter mobile number/email here> (optional)",
+  exposeMethods: true, 
+  success: (data) => {
+      // 1. Get verified token from response
+      console.log('success response', data);
+      const accessToken = data.message || data;
+      
+      // 2. Send this token to Backend API: 
+      // POST /api/v1/auth/verify-widget-token
+      // Body: { accessToken: accessToken }
+  },
+  failure: (error) => {
+      console.log('failure reason', error);
+  }
+};
+</pre>
+        </div>
+        <p class="text-xs text-blue-600 mt-2">
+          Note: The backend expects the exact token returned by MSG91 success callback to be sent to
+          <code>/api/v1/auth/verify-widget-token</code>.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Step 1: OTP Widget -->
+        <div class="bg-white rounded-lg shadow p-6">
+          <h2 class="text-xl font-semibold mb-4 text-gray-800">Step 1: Send & Verify OTP</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Phone Number (with country code)</label>
+              <input type="text" id="widgetPhone" placeholder="919876543210"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <p class="text-xs text-gray-500 mt-1">Format: country code + number (no + sign). E.g., 919876543210</p>
+            </div>
+
+            <button onclick="sendWidgetOtp()" id="sendWidgetOtpBtn"
+              class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition">
+              Send OTP
+            </button>
+
+            <div id="otpInputSection" class="hidden space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Enter OTP</label>
+                <input type="text" id="widgetOtp" placeholder="123456" maxlength="6"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-2xl tracking-widest">
+              </div>
+              <button onclick="verifyWidgetOtp()" id="verifyWidgetOtpBtn"
+                class="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition">
+                Verify OTP
+              </button>
+              <div class="flex gap-2">
+                <button onclick="retryWidgetOtp('11')"
+                  class="flex-1 bg-gray-100 text-gray-700 py-2 px-3 rounded-md hover:bg-gray-200 transition text-sm">
+                  Resend SMS
+                </button>
+                <button onclick="retryWidgetOtp('4')"
+                  class="flex-1 bg-gray-100 text-gray-700 py-2 px-3 rounded-md hover:bg-gray-200 transition text-sm">
+                  Voice Call
+                </button>
+              </div>
+            </div>
+
+            <div id="widgetResult" class="hidden p-3 rounded-md text-sm"></div>
+          </div>
+        </div>
+
+        <!-- Step 2: Verify Token with Backend -->
+        <div class="bg-white rounded-lg shadow p-6">
+          <h2 class="text-xl font-semibold mb-4 text-gray-800">Step 2: Verify with Backend</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">MSG91 Access Token</label>
+              <textarea id="widgetAccessToken" placeholder="Token received after OTP verification (auto-filled)"
+                rows="3"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono"></textarea>
+            </div>
+            <button onclick="verifyWidgetTokenWithBackend()" id="verifyWidgetTokenBtn"
+              class="w-full bg-purple-600 text-white py-2 px-4 rounded-md hover:bg-purple-700 transition">
+              Verify Token with Backend
+            </button>
+            <div id="backendVerifyResult" class="hidden p-3 rounded-md text-sm"></div>
+          </div>
+        </div>
+
+        <!-- Step 3: Register (if new user) -->
+        <div class="bg-white rounded-lg shadow p-6 md:col-span-2">
+          <h2 class="text-xl font-semibold mb-4 text-gray-800">Step 3: Complete Registration (New Users Only)</h2>
+          <p class="text-sm text-gray-600 mb-4">If this is a new phone number, complete registration with your name.</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Your Name</label>
+              <input type="text" id="registerName" placeholder="John Doe"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Verification Token</label>
+              <input type="text" id="registerToken" placeholder="Auto-filled from step 2"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono">
+            </div>
+          </div>
+          <button onclick="register()" id="registerBtn"
+            class="mt-4 bg-green-600 text-white py-2 px-6 rounded-md hover:bg-green-700 transition">
+            Complete Registration
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tokens Tab -->
+    <div id="panel-tokens" class="tab-panel hidden">
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Current Session -->
+        <div class="bg-white rounded-lg shadow p-6">
+          <h2 class="text-xl font-semibold mb-4 text-gray-800">Current Session</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm font-medium text-gray-700">User Info</label>
+              <pre id="storedUserInfo"
+                class="mt-1 p-3 bg-gray-50 rounded-md text-xs font-mono overflow-auto max-h-32">(not logged in)</pre>
+            </div>
+            <div>
+              <div class="flex justify-between items-center">
+                <label class="text-sm font-medium text-gray-700">Access Token</label>
+                <button onclick="copyToClipboard('storedAccessToken')"
+                  class="text-xs text-blue-600 hover:underline">Copy</button>
+              </div>
+              <textarea id="storedAccessToken" readonly rows="2"
+                class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 font-mono text-xs"></textarea>
+            </div>
+            <div>
+              <div class="flex justify-between items-center">
+                <label class="text-sm font-medium text-gray-700">Refresh Token</label>
+                <button onclick="copyToClipboard('storedRefreshToken')"
+                  class="text-xs text-blue-600 hover:underline">Copy</button>
+              </div>
+              <textarea id="storedRefreshToken" readonly rows="2"
+                class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 font-mono text-xs"></textarea>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700">Decoded Access Token</label>
+              <pre id="decodedToken"
+                class="mt-1 p-3 bg-gray-50 rounded-md text-xs font-mono overflow-auto max-h-40">(none)</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Token Actions -->
+        <div class="bg-white rounded-lg shadow p-6">
+          <h2 class="text-xl font-semibold mb-4 text-gray-800">Token Actions</h2>
+          <div class="space-y-4">
+            <!-- Refresh Token -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Refresh Token</label>
+              <textarea id="refreshTokenInput" placeholder="Paste or use stored refresh token" rows="2"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono"></textarea>
+              <button onclick="refreshToken()" id="refreshTokenBtn"
+                class="mt-2 w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                Refresh Tokens (Rotate)
+              </button>
+            </div>
+
+            <!-- Logout -->
+            <div class="pt-4 border-t">
+              <button onclick="logout()" id="logoutBtn"
+                class="w-full bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 transition">
+                Logout (Revoke Tokens)
+              </button>
+            </div>
+
+            <!-- Clear -->
+            <div>
+              <button onclick="clearTokens()"
+                class="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300 transition">
+                Clear Local Storage
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Protected Routes Tab -->
+    <div id="panel-protected" class="tab-panel hidden">
+      <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4 text-gray-800">Test Protected Endpoints</h2>
+        <p class="text-sm text-gray-600 mb-4">These requests use the stored access token.</p>
+
+        <div class="grid md:grid-cols-3 gap-4">
+          <button onclick="testProtected('/orgs')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /orgs</div>
+            <div class="text-sm text-gray-500">List organizations</div>
+          </button>
+          <button onclick="testProtected('/trips')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /trips</div>
+            <div class="text-sm text-gray-500">List trips</div>
+          </button>
+          <button onclick="testProtected('/drivers')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /drivers</div>
+            <div class="text-sm text-gray-500">List drivers</div>
+          </button>
+          <button onclick="testProtected('/trucks')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /trucks</div>
+            <div class="text-sm text-gray-500">List trucks</div>
+          </button>
+          <button onclick="testProtected('/items')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /items</div>
+            <div class="text-sm text-gray-500">List items</div>
+          </button>
+          <button onclick="testProtected('/chat/threads')"
+            class="bg-gray-100 hover:bg-gray-200 p-4 rounded-lg text-left transition">
+            <div class="font-medium">GET /chat/threads</div>
+            <div class="text-sm text-gray-500">List chat threads</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Custom Request -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4 text-gray-800">Custom Request</h2>
+        <div class="space-y-4">
+          <div class="flex gap-4">
+            <select id="customMethod" class="px-3 py-2 border border-gray-300 rounded-md">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+            <input type="text" id="customEndpoint" placeholder="/endpoint"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-md">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Request Body (JSON)</label>
+            <textarea id="customBody" placeholder='{"key": "value"}' rows="3"
+              class="w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"></textarea>
+          </div>
+          <button onclick="customRequest()"
+            class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition">
+            Send Request
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Response Panel -->
+    <div class="mt-6 bg-white rounded-lg shadow p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold text-gray-800">Response</h2>
+        <button onclick="clearResponse()" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+      </div>
+      <pre id="responsePanel"
+        class="bg-gray-900 text-green-400 p-4 rounded-md overflow-auto max-h-96 text-sm font-mono">// Responses will appear here</pre>
+    </div>
+  </div>
+
+  <!-- MSG91 OTP Widget Script -->
+  <script type="text/javascript">
+    // MSG91 Widget will be initialized when user enters widget ID
+    function initSendOTP(config) {
+      console.log('MSG91 Widget initialized', config);
+    }
+  </script>
+  <script type="text/javascript" src="https://control.msg91.com/app/assets/otp-provider/otp-provider.js"></script>
+
+  <script>
+    // State
+    let accessToken = localStorage.getItem('accessToken') || '';
+    let refreshTokenStored = localStorage.getItem('refreshToken') || '';
+    let userInfo = JSON.parse(localStorage.getItem('userInfo') || 'null');
+
+    // Default config from User (matches .env)
+    const DEFAULT_CONFIG = {
+      widgetId: "366263666676393236353739",
+      tokenAuth: "486792Tw0DWQ1f8aqm698190ebP1"
+    };
+
+    let widgetConfig = null; // { widgetId, tokenAuth }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+      updateTokenDisplay();
+      // Auto-load widget config on page load
+      loadWidgetConfig();
+    });
+
+    // Load MSG91 widget config from backend
+    // Load MSG91 widget config from backend
+    async function loadWidgetConfig() {
+      const statusEl = document.getElementById('widgetConfigStatus');
+      setLoading('loadConfigBtn', true);
+
+      try {
+        const response = await fetch(getBaseUrl() + '/auth/widget-config');
+        const data = await response.json();
+
+        if (data.success && data.data) {
+          widgetConfig = data.data;
+          statusEl.innerHTML = `<span class="text-green-600">✓ Widget loaded from Backend: ${widgetConfig.widgetId.substring(0, 10)}...</span>`;
+          initMsg91Widget(widgetConfig.widgetId, widgetConfig.tokenAuth);
+          showResponse(data, 200);
+        } else {
+          throw new Error('Invalid config from backend');
+        }
+      } catch (error) {
+        console.warn('Backend config load failed, using fallback:', error);
+        // Fallback to manual/default config if backend fails
+        widgetConfig = DEFAULT_CONFIG;
+        statusEl.innerHTML = `<span class="text-orange-600">⚠ Using Default Config (Backend unreachable): ${widgetConfig.widgetId.substring(0, 10)}...</span>`;
+        initMsg91Widget(widgetConfig.widgetId, widgetConfig.tokenAuth);
+        showResponse({
+          error: error.message,
+          message: "Loaded default hardcoded config for testing",
+          config: widgetConfig
+        }, 0);
+      }
+
+      setLoading('loadConfigBtn', false);
+    }
+
+    // MSG91 Widget initialization
+    function initMsg91Widget(widgetId, tokenAuth) {
+      if (!widgetId) return;
+
+      // MSG91 widget config as per requirement
+      window.msg91Config = {
+        widgetId: widgetId,
+        tokenAuth: tokenAuth || '',
+        identifier: document.getElementById('widgetPhone')?.value || undefined, // Optional
+        exposeMethods: true,
+        success: (data) => {
+          console.log('MSG91 success callback:', data);
+          // Widget returns access token on successful OTP verification
+          const token = data.message || data;
+          document.getElementById('widgetAccessToken').value = typeof token === 'string' ? token : JSON.stringify(token);
+
+          const resultDiv = document.getElementById('widgetResult');
+          resultDiv.classList.remove('hidden', 'bg-red-100', 'text-red-800');
+          resultDiv.classList.add('bg-green-100', 'text-green-800');
+          resultDiv.innerHTML = '<strong>OTP Verified via Widget Callback!</strong> Token received.';
+
+          showToast('OTP verified! Token received.', 'success');
+        },
+        failure: (error) => {
+          console.log('MSG91 failure callback:', error);
+          showToast('OTP verification failed: ' + error, 'error');
+        }
+      };
+
+      // Re-init if the script provides an init function
+      if (typeof initSendOTP === 'function') {
+        initSendOTP(window.msg91Config);
+      }
+
+      console.log('MSG91 widget initialized with config:', { widgetId, tokenAuth: tokenAuth ? '***' : '(none)' });
+    }
+
+    // Helpers
+    function getBaseUrl() {
+      return document.getElementById('apiBaseUrl').value.replace(/\/$/, '');
+    }
+
+    function showToast(message, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
+    function setLoading(btnId, loading) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      if (loading) {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="loader"></span>Loading...';
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = btn.dataset.originalText || btn.innerHTML.replace('<span class="loader"></span>Loading...', '');
+      }
+    }
+
+    function showResponse(data, status = 200) {
+      const panel = document.getElementById('responsePanel');
+      const statusColor = status >= 200 && status < 300 ? 'text-green-400' : 'text-red-400';
+      panel.innerHTML = `<span class="${statusColor}">// Status: ${status}</span>\n${JSON.stringify(data, null, 2)}`;
+    }
+
+    function clearResponse() {
+      document.getElementById('responsePanel').textContent = '// Responses will appear here';
+    }
+
+    function storeTokens(tokens, user = null) {
+      if (tokens?.accessToken) {
+        accessToken = tokens.accessToken;
+        localStorage.setItem('accessToken', accessToken);
+      }
+      if (tokens?.refreshToken) {
+        refreshTokenStored = tokens.refreshToken;
+        localStorage.setItem('refreshToken', refreshTokenStored);
+      }
+      if (user) {
+        userInfo = user;
+        localStorage.setItem('userInfo', JSON.stringify(user));
+      }
+      updateTokenDisplay();
+    }
+
+    function updateTokenDisplay() {
+      document.getElementById('storedAccessToken').value = accessToken || '(none)';
+      document.getElementById('storedRefreshToken').value = refreshTokenStored || '(none)';
+      document.getElementById('storedUserInfo').textContent = userInfo ? JSON.stringify(userInfo, null, 2) : '(not logged in)';
+      document.getElementById('refreshTokenInput').value = refreshTokenStored;
+
+      // Decode JWT
+      if (accessToken) {
+        try {
+          const payload = JSON.parse(atob(accessToken.split('.')[1]));
+          payload.exp_readable = new Date(payload.exp * 1000).toLocaleString();
+          payload.expires_in = Math.max(0, Math.floor((payload.exp * 1000 - Date.now()) / 1000)) + ' seconds';
+          document.getElementById('decodedToken').textContent = JSON.stringify(payload, null, 2);
+        } catch {
+          document.getElementById('decodedToken').textContent = '(invalid token)';
+        }
+      } else {
+        document.getElementById('decodedToken').textContent = '(none)';
+      }
+    }
+
+    function clearTokens() {
+      accessToken = '';
+      refreshTokenStored = '';
+      userInfo = null;
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('userInfo');
+      updateTokenDisplay();
+      showToast('Tokens cleared', 'success');
+    }
+
+    function copyToClipboard(elementId) {
+      const text = document.getElementById(elementId).value;
+      navigator.clipboard.writeText(text);
+      showToast('Copied to clipboard', 'success');
+    }
+
+    // Tab switching
+    function showTab(tabName) {
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+        b.classList.add('text-gray-500');
+      });
+
+      document.getElementById(`panel-${tabName}`).classList.remove('hidden');
+      const activeBtn = document.getElementById(`tab-${tabName}`);
+      activeBtn.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+      activeBtn.classList.remove('text-gray-500');
+    }
+
+    // API Calls
+    async function apiCall(endpoint, options = {}) {
+      const url = getBaseUrl() + endpoint;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      };
+
+      if (options.auth && accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+
+      try {
+        const response = await fetch(url, {
+          method: options.method || 'GET',
+          headers,
+          body: options.body ? JSON.stringify(options.body) : undefined,
+        });
+
+        const data = await response.json();
+        showResponse(data, response.status);
+
+        if (!response.ok) {
+          showToast(data.message || 'Request failed', 'error');
+        }
+
+        return { data, status: response.status, ok: response.ok };
+      } catch (error) {
+        const errorData = { error: error.message };
+        showResponse(errorData, 0);
+        showToast('Network error: ' + error.message, 'error');
+        return { data: errorData, status: 0, ok: false };
+      }
+    }
+
+    // ─── MSG91 Widget OTP Flow ─────────────────────────────────
+
+    function sendWidgetOtp() {
+      const phone = document.getElementById('widgetPhone').value.trim();
+
+      if (!widgetConfig) {
+        showToast('Click "Load Widget Config" first', 'error');
+        return;
+      }
+
+      if (!phone) {
+        showToast('Enter phone number', 'error');
+        return;
+      }
+
+      if (typeof window.sendOtp === 'function') {
+        setLoading('sendWidgetOtpBtn', true);
+        window.sendOtp(
+          phone,
+          (data) => {
+            setLoading('sendWidgetOtpBtn', false);
+            console.log('OTP sent:', data);
+            document.getElementById('otpInputSection').classList.remove('hidden');
+            showToast('OTP sent!', 'success');
+            showResponse({ success: true, message: 'OTP sent via MSG91', data }, 200);
+          },
+          (error) => {
+            setLoading('sendWidgetOtpBtn', false);
+            console.log('Send OTP error:', error);
+            showToast('Failed to send OTP: ' + error, 'error');
+            showResponse({ success: false, error }, 400);
+          }
+        );
+      } else {
+        showToast('MSG91 widget not loaded. Click "Load Widget Config" first.', 'error');
+      }
+    }
+
+    function verifyWidgetOtp() {
+      const otp = document.getElementById('widgetOtp').value.trim();
+      if (!otp) {
+        showToast('Enter OTP', 'error');
+        return;
+      }
+
+      if (typeof window.verifyOtp === 'function') {
+        setLoading('verifyWidgetOtpBtn', true);
+        window.verifyOtp(
+          otp,
+          (data) => {
+            setLoading('verifyWidgetOtpBtn', false);
+            console.log('OTP verified:', data);
+
+            // The widget returns an access token in success callback
+            const token = data.message || data.accessToken || data;
+            document.getElementById('widgetAccessToken').value = typeof token === 'string' ? token : JSON.stringify(token);
+
+            const resultDiv = document.getElementById('widgetResult');
+            resultDiv.classList.remove('hidden', 'bg-red-100', 'text-red-800');
+            resultDiv.classList.add('bg-green-100', 'text-green-800');
+            resultDiv.innerHTML = '<strong>OTP Verified!</strong> Now click "Verify Token with Backend" to complete login.';
+
+            showToast('OTP verified! Now verify with backend.', 'success');
+            showResponse({ success: true, message: 'OTP verified by MSG91', accessToken: token }, 200);
+          },
+          (error) => {
+            setLoading('verifyWidgetOtpBtn', false);
+            console.log('Verify OTP error:', error);
+
+            const resultDiv = document.getElementById('widgetResult');
+            resultDiv.classList.remove('hidden', 'bg-green-100', 'text-green-800');
+            resultDiv.classList.add('bg-red-100', 'text-red-800');
+            resultDiv.innerHTML = '<strong>Verification failed:</strong> ' + error;
+
+            showToast('OTP verification failed', 'error');
+            showResponse({ success: false, error }, 400);
+          }
+        );
+      } else {
+        showToast('MSG91 widget not loaded', 'error');
+      }
+    }
+
+    function retryWidgetOtp(channel) {
+      if (typeof window.retryOtp === 'function') {
+        window.retryOtp(
+          channel,
+          (data) => {
+            console.log('Retry OTP:', data);
+            showToast('OTP resent!', 'success');
+          },
+          (error) => {
+            console.log('Retry error:', error);
+            showToast('Failed to resend: ' + error, 'error');
+          }
+        );
+      } else {
+        showToast('MSG91 widget not loaded', 'error');
+      }
+    }
+
+    async function verifyWidgetTokenWithBackend() {
+      const token = document.getElementById('widgetAccessToken').value.trim();
+      if (!token) {
+        showToast('No access token to verify', 'error');
+        return;
+      }
+
+      setLoading('verifyWidgetTokenBtn', true);
+      const { data, ok } = await apiCall('/auth/verify-widget-token', {
+        method: 'POST',
+        body: { accessToken: token }
+      });
+      setLoading('verifyWidgetTokenBtn', false);
+
+      const resultDiv = document.getElementById('backendVerifyResult');
+      resultDiv.classList.remove('hidden', 'bg-green-100', 'bg-yellow-100', 'text-green-800', 'text-yellow-800');
+
+      if (ok) {
+        if (data.isNewUser) {
+          resultDiv.classList.add('bg-yellow-100', 'text-yellow-800');
+          resultDiv.innerHTML = `<strong>New User!</strong> Phone: ${data.phone}<br>Complete registration below.`;
+          document.getElementById('registerToken').value = data.verificationToken;
+          showToast('Phone verified! Complete registration.', 'success');
+        } else {
+          resultDiv.classList.add('bg-green-100', 'text-green-800');
+          resultDiv.innerHTML = `<strong>Welcome back, ${data.user.name}!</strong>`;
+          storeTokens(data.tokens, data.user);
+          showToast('Logged in!', 'success');
+        }
+      }
+    }
+
+    // ─── Registration ──────────────────────────────────────────
+
+    async function register() {
+      const name = document.getElementById('registerName').value;
+      const verificationToken = document.getElementById('registerToken').value;
+      if (!name || !verificationToken) return showToast('Name and verification token required', 'error');
+
+      setLoading('registerBtn', true);
+      const { data, ok } = await apiCall('/auth/register', {
+        method: 'POST',
+        body: { name, verificationToken }
+      });
+      setLoading('registerBtn', false);
+
+      if (ok) {
+        storeTokens(data.tokens, data.user);
+        showToast('Registered successfully!', 'success');
+      }
+    }
+
+    // ─── Token Management ──────────────────────────────────────
+
+    async function refreshToken() {
+      const token = document.getElementById('refreshTokenInput').value || refreshTokenStored;
+      if (!token) return showToast('Refresh token required', 'error');
+
+      setLoading('refreshTokenBtn', true);
+      const { data, ok } = await apiCall('/auth/refresh', {
+        method: 'POST',
+        body: { refreshToken: token }
+      });
+      setLoading('refreshTokenBtn', false);
+
+      if (ok) {
+        storeTokens(data.tokens);
+        showToast('Tokens refreshed & rotated!', 'success');
+      }
+    }
+
+    async function logout() {
+      setLoading('logoutBtn', true);
+      const { data, ok } = await apiCall('/auth/logout', {
+        method: 'POST',
+        body: { refreshToken: refreshTokenStored },
+        auth: true
+      });
+      setLoading('logoutBtn', false);
+
+      if (ok) {
+        clearTokens();
+        showToast('Logged out!', 'success');
+      }
+    }
+
+    // ─── Protected Routes ──────────────────────────────────────
+
+    async function testProtected(endpoint) {
+      if (!accessToken) return showToast('Login first', 'error');
+      await apiCall(endpoint, { auth: true });
+    }
+
+    async function customRequest() {
+      const method = document.getElementById('customMethod').value;
+      const endpoint = document.getElementById('customEndpoint').value;
+      const bodyText = document.getElementById('customBody').value;
+
+      if (!endpoint) return showToast('Endpoint required', 'error');
+
+      let body = undefined;
+      if (bodyText && (method === 'POST' || method === 'PATCH')) {
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          return showToast('Invalid JSON body', 'error');
+        }
+      }
+
+      await apiCall(endpoint, { method, body, auth: true });
+    }
+  </script>
+</body>
+
+</html>

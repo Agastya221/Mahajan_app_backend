@@ -11,6 +11,19 @@ const connection = new Redis({
   maxRetriesPerRequest: null,
 });
 
+// Filter out BullMQ warning about Redis version/eviction policy
+const originalWarn = console.warn;
+console.warn = (...args) => {
+  if (
+    args[0] &&
+    typeof args[0] === 'string' &&
+    (args[0].includes('Eviction policy is volatile-lru') || args[0].includes('Redis Version'))
+  ) {
+    return;
+  }
+  originalWarn.apply(console, args);
+};
+
 // Worker to process notification jobs
 export const notificationWorker = new Worker<NotificationPayload>(
   'notifications',

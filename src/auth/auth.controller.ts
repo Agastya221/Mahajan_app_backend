@@ -1,54 +1,57 @@
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import {
-  sendOtpSchema,
-  verifyOtpSchema,
   registerSchema,
-  resendOtpSchema,
   refreshTokenSchema,
+  verifyWidgetTokenSchema,
 } from './auth.dto';
+import { msg91Service } from './msg91.service';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 const authService = new AuthService();
 
 export class AuthController {
-  // Step 1: Send OTP to phone number
-  sendOtp = asyncHandler(async (req: Request, res: Response) => {
-    const { phone } = sendOtpSchema.parse(req.body);
-    const result = await authService.sendOtp(phone);
-
+  /**
+   * Get MSG91 widget configuration for frontend initialization
+   * Returns widgetId and tokenAuth needed to initialize the OTP widget
+   */
+  getWidgetConfig = asyncHandler(async (req: Request, res: Response) => {
+    const widgetConfig = msg91Service.getWidgetConfig();
     res.json({
       success: true,
-      message: result.message,
+      data: widgetConfig,
     });
   });
-
-  // Resend OTP (voice or text)
-  resendOtp = asyncHandler(async (req: Request, res: Response) => {
-    const { phone, retryType } = resendOtpSchema.parse(req.body);
-    const result = await authService.resendOtp(phone, retryType);
-
-    res.json({
-      success: true,
-      message: result.message,
-    });
-  });
-
-  // Step 2: Verify OTP
-  // - If existing user: returns tokens
-  // - If new user: returns verificationToken for registration
-  verifyOtp = asyncHandler(async (req: Request, res: Response) => {
-    const { phone, otp } = verifyOtpSchema.parse(req.body);
+  /**
+   * Verify MSG91 widget access token
+   *
+   * For Mobile App (React Native):
+   * - Use MSG91 React Native SDK to handle OTP UI
+   * - SDK returns access token on successful verification
+   * - Send that token to this endpoint
+   *
+   * For Web Testing:
+   * - Use MSG91 Web Widget with exposeMethods: true
+   * - Call window.sendOtp(), window.verifyOtp()
+   * - On success, send the access token here
+   *
+   * Response:
+   * - Existing user: returns { isNewUser: false, user, tokens }
+   * - New user: returns { isNewUser: true, phone, verificationToken }
+   */
+  verifyWidgetToken = asyncHandler(async (req: Request, res: Response) => {
+    const { accessToken } = verifyWidgetTokenSchema.parse(req.body);
     const deviceInfo = req.headers['user-agent'];
-    const result = await authService.verifyOtp(phone, otp, deviceInfo);
+    const result = await authService.verifyWidgetToken(accessToken, deviceInfo);
 
     if (result.isNewUser) {
       res.json({
         success: true,
         isNewUser: true,
+        phone: result.phone,
         verificationToken: result.verificationToken,
-        message: 'OTP verified. Complete registration to create your account.',
+        message: 'Phone verified. Complete registration to create your account.',
       });
     } else {
       res.json({
@@ -60,7 +63,10 @@ export class AuthController {
     }
   });
 
-  // Step 3: Register (only for new users after OTP verification)
+  /**
+   * Complete registration for new users (after OTP verification)
+   * Requires verificationToken from verify-widget-token endpoint
+   */
   register = asyncHandler(async (req: Request, res: Response) => {
     const data = registerSchema.parse(req.body);
     const deviceInfo = req.headers['user-agent'];
@@ -73,7 +79,10 @@ export class AuthController {
     });
   });
 
-  // Refresh token (rotates refresh token)
+  /**
+   * Refresh access token using refresh token
+   * Implements token rotation for security
+   */
   refreshToken = asyncHandler(async (req: Request, res: Response) => {
     const { refreshToken } = refreshTokenSchema.parse(req.body);
     const deviceInfo = req.headers['user-agent'];
@@ -85,7 +94,11 @@ export class AuthController {
     });
   });
 
-  // Logout (blacklists access token + revokes refresh token)
+  /**
+   * Logout user
+   * - Blacklists access token in Redis
+   * - Revokes refresh token in DB
+   */
   logout = asyncHandler(async (req: AuthRequest, res: Response) => {
     const accessToken = req.headers.authorization?.replace('Bearer ', '');
     const { refreshToken } = req.body || {};

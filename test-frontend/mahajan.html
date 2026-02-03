@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mahajan Dashboard - Live</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="js/app.js"></script>
+
+    <!-- Leaflet for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
+    <style>
+        .view-panel {
+            height: calc(100vh - 80px);
+            /* Adjust for navbar */
+        }
+
+        .map-modal {
+            height: 500px;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 h-screen flex flex-col overflow-hidden">
+
+    <!-- Navbar -->
+    <nav class="bg-indigo-800 text-white shadow-lg shrink-0 z-20">
+        <div class="px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <span class="font-bold text-xl tracking-tight">Mahajan Logistics</span>
+                <span class="bg-indigo-700 text-xs px-2 py-1 rounded">Admin Console</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <span id="user-name" class="text-indigo-200 text-sm"></span>
+                <button onclick="State.clearAuth()"
+                    class="bg-indigo-900 hover:bg-black/30 px-3 py-1 rounded text-sm transition">Logout</button>
+            </div>
+        </div>
+        <!-- Tabs -->
+        <div class="px-6 flex gap-1 overflow-x-auto bg-indigo-700">
+            <button onclick="switchTab('trucks')" id="tab-trucks"
+                class="tab-btn px-4 py-3 text-sm font-medium text-white/70 hover:text-white border-b-2 border-transparent transition">Trucks</button>
+            <button onclick="switchTab('trips')" id="tab-trips"
+                class="tab-btn px-4 py-3 text-sm font-medium text-white/70 hover:text-white border-b-2 border-transparent transition">Trips</button>
+            <button onclick="switchTab('chat')" id="tab-chat"
+                class="tab-btn px-4 py-3 text-sm font-medium text-white/70 hover:text-white border-b-2 border-transparent transition">💬
+                Chat</button>
+            <button onclick="switchTab('drivers')" id="tab-drivers"
+                class="tab-btn px-4 py-3 text-sm font-medium text-white/70 hover:text-white border-b-2 border-transparent transition">Drivers</button>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-hidden relative">
+
+        <!-- TRUCKS VIEW (First/Default) -->
+        <div id="view-trucks" class="view-panel p-6 h-full overflow-y-auto hidden">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800">Truck Fleet</h2>
+                    <p class="text-sm text-gray-500">Manage vehicles and tracking</p>
+                </div>
+                <button onclick="openModal('modal-create-truck')"
+                    class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm">+ Add Truck</button>
+            </div>
+            <div id="list-trucks" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pb-20"></div>
+        </div>
+
+        <!-- TRIPS VIEW -->
+        <div id="view-trips" class="view-panel p-6 h-full overflow-y-auto hidden">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold text-gray-800">Trip Management</h2>
+                <button onclick="openModal('modal-create-trip')"
+                    class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm shadow-md flex items-center gap-2">
+                    <span>+ New Trip</span>
+                </button>
+            </div>
+            <div id="list-trips" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-20"></div>
+        </div>
+
+        <!-- CHAT VIEW -->
+        <div id="view-chat" class="view-panel h-full hidden flex bg-white">
+            <div class="border-r border-gray-200 w-80 flex flex-col bg-gray-50">
+                <div class="p-4 border-b border-gray-200 bg-white">
+                    <button onclick="openNewChatModal()"
+                        class="w-full bg-indigo-100 text-indigo-700 py-2 rounded border border-indigo-200 text-sm font-medium hover:bg-indigo-50">New
+                        Conversation</button>
+                </div>
+                <div id="list-threads" class="flex-1 overflow-y-auto"></div>
+            </div>
+            <div class="flex-1 flex flex-col bg-slate-50 relative" id="chat-area">
+                <div id="chat-placeholder" class="absolute inset-0 flex items-center justify-center text-gray-400">
+                    <p>Select a conversation to start chatting</p>
+                </div>
+                <div id="active-chat-container" class="hidden flex flex-col h-full">
+                    <div class="p-4 border-b bg-white flex justify-between items-center shadow-sm">
+                        <h3 id="chat-header-title" class="font-bold text-gray-800">Chat</h3>
+                        <span id="chat-header-status" class="text-xs text-green-600 font-medium">Online</span>
+                    </div>
+                    <div id="messages-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+                    <div class="p-4 bg-white border-t">
+                        <form onsubmit="handleSendMessage(event)" class="flex gap-2">
+                            <input type="text" id="msg-input"
+                                class="flex-1 border rounded-full px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                placeholder="Type a message...">
+                            <button type="submit"
+                                class="bg-indigo-600 text-white rounded-full p-2 w-10 h-10 flex items-center justify-center hover:bg-indigo-700">➜</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DRIVERS VIEW -->
+        <div id="view-drivers" class="view-panel p-6 h-full hidden overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold text-gray-800">Drivers Directory</h2>
+                <button onclick="openModal('modal-create-driver')"
+                    class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm">+ Add Driver</button>
+            </div>
+            <div id="list-drivers" class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
+        </div>
+
+    </main>
+
+    <!-- TRUCK MAP MODAL -->
+    <div id="modal-truck-map" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col h-[600px]">
+            <div class="bg-indigo-600 text-white p-4 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <h3 class="font-bold" id="truck-map-title">Truck Location</h3>
+                    <span id="truck-live-status"
+                        class="bg-green-500 text-xs px-2 py-0.5 rounded animate-pulse">LIVE</span>
+                </div>
+                <button onclick="closeModal('modal-truck-map')"
+                    class="text-white font-bold text-xl hover:text-indigo-200">×</button>
+            </div>
+            <div class="flex-1 relative">
+                <div id="truck-map" class="w-full h-full"></div>
+            </div>
+            <div class="p-4 bg-gray-50 border-t flex justify-between text-sm">
+                <div>
+                    <span class="text-gray-500 block">Current Location</span>
+                    <span class="font-bold text-gray-800" id="truck-loc-text">Fetching...</span>
+                </div>
+                <div>
+                    <span class="text-gray-500 block">Last Update</span>
+                    <span class="font-bold text-gray-800" id="truck-last-update">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Trip Modal -->
+    <div id="modal-create-trip" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl p-6 w-96">
+            <h3 class="font-bold mb-4">New Trip</h3>
+            <form id="form-create-trip" onsubmit="handleCreateTrip(event)" class="space-y-4">
+                <select id="trip-truck" class="w-full border p-2 rounded"></select>
+                <select id="trip-driver" class="w-full border p-2 rounded"></select>
+                <input id="trip-route" placeholder="Route" class="w-full border p-2 rounded">
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('modal-create-trip')"
+                        class="px-3 py-1 text-gray-500">Cancel</button>
+                    <button type="submit" class="bg-indigo-600 text-white px-3 py-1 rounded">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Chat Modal -->
+    <div id="modal-create-thread" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl p-6 w-96">
+            <h3 class="font-bold mb-4">Start Chat</h3>
+            <div class="space-y-2">
+                <input id="chat-trip-id" placeholder="Enter Trip ID" class="w-full border p-2 rounded">
+                <button onclick="handleCreateThread()" class="w-full bg-indigo-600 text-white py-2 rounded">Start
+                    Chat</button>
+                <button onclick="closeModal('modal-create-thread')" class="w-full mt-2 text-gray-500">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // GLOBALS
+        let mapTruck = null;
+        let truckMarker = null;
+        let currentThreadId = null;
+        let activeTruckSubscription = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!State.token) window.location.href = 'index.html';
+            document.getElementById('user-name').textContent = State.user?.name || 'Admin';
+            Socket.connect();
+            loadDropdowns();
+            switchTab('trucks');
+        });
+
+        // TABS
+        function switchTab(tab) {
+            document.querySelectorAll('.view-panel').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`view-${tab}`).classList.remove('hidden');
+
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('border-white', 'text-white'));
+            const btn = document.getElementById(`tab-${tab}`);
+            if (btn) btn.classList.add('border-white', 'text-white');
+
+            if (tab === 'chat') loadChatThreads();
+            if (tab === 'trips' || tab === 'drivers' || tab === 'trucks') loadData(tab);
+        }
+
+        // --- TRUCK CARD & LOGIC ---
+        const truckCard = (t) => {
+            return `
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative group hover:shadow-md transition">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-bold text-lg text-gray-800">${t.registrationNumber}</h3>
+                        <p class="text-sm text-gray-500">${t.model}</p>
+                    </div>
+                </div>
+                
+                <div class="mt-4 pt-4 border-t border-gray-50 flex items-center justify-between">
+                    <div id="truck-status-${t.id}" class="text-xs font-semibold text-gray-500 flex items-center">
+                        <span class="w-2 h-2 rounded-full bg-gray-300 mr-2"></span> Loading...
+                    </div>
+                    <button onclick="openTruckMap('${t.id}', '${t.registrationNumber}')" class="text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 transition-colors">
+                        📍 View Location
+                    </button>
+                </div>
+            </div>`;
+        };
+
+        async function updateTruckStatuses(trucks) {
+            try {
+                const res = await API.trips.list();
+                const activeTrips = res.data.trips.filter(tr => tr.status === 'IN_TRANSIT');
+
+                trucks.forEach(t => {
+                    const activeTrip = activeTrips.find(trip => trip.truckId === t.id);
+                    const el = document.getElementById(`truck-status-${t.id}`);
+                    if (!el) return;
+
+                    if (activeTrip) {
+                        fetchLocationForCard(activeTrip.id, t.id, el);
+                    } else {
+                        el.innerHTML = `<span class="w-2 h-2 rounded-full bg-gray-400 mr-2"></span> Parked`;
+                    }
+                });
+            } catch (e) { }
+        }
+
+        async function fetchLocationForCard(tripId, truckId, el) {
+            try {
+                const locRes = await API.tracking.getLatest(tripId);
+                if (locRes.data) {
+                    const lat = locRes.data.latitude;
+                    let region = "Maharashtra";
+                    if (lat > 22) region = "Madhya Pradesh";
+                    else if (lat < 16) region = "Karnataka";
+                    else if (lat > 20) region = "Gujarat";
+
+                    el.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></span> ${region} (Moving)`;
+                    el.classList.add('text-green-700');
+                } else {
+                    el.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span> In Transit`;
+                }
+            } catch (e) {
+                el.innerHTML = `<span class="w-2 h-2 rounded-full bg-orange-400 mr-2"></span> Signal Lost`;
+            }
+        }
+
+        // --- SINGLE TRUCK MAP MODAL ---
+        async function openTruckMap(truckId, regNum) {
+            document.getElementById('modal-truck-map').classList.remove('hidden');
+            document.getElementById('truck-map-title').textContent = `${regNum} Live Tracking`;
+            document.getElementById('truck-live-status').classList.remove('hidden');
+
+            if (activeTruckSubscription) {
+                Socket.unsubscribeTrip(activeTruckSubscription);
+                activeTruckSubscription = null;
+            }
+
+            setTimeout(() => {
+                if (!mapTruck) {
+                    mapTruck = L.map('truck-map').setView([20.5937, 78.9629], 5);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap'
+                    }).addTo(mapTruck);
+                }
+                mapTruck.invalidateSize();
+                loadSingleTruckData(truckId);
+            }, 100);
+        }
+
+        async function loadSingleTruckData(truckId) {
+            if (truckMarker) {
+                mapTruck.removeLayer(truckMarker);
+                truckMarker = null;
+            }
+
+            const res = await API.trips.list();
+            const activeTrip = res.data.trips.find(t => t.truckId === truckId && t.status === 'IN_TRANSIT');
+
+            if (!activeTrip) {
+                document.getElementById('truck-live-status').classList.add('hidden');
+                document.getElementById('truck-loc-text').textContent = "Vehicle Parked (No Active Trip)";
+                mapTruck.setView([20.5937, 78.9629], 4);
+                return;
+            }
+
+            activeTruckSubscription = activeTrip.id;
+            Socket.subscribeTrip(activeTrip.id);
+
+            try {
+                const locRes = await API.tracking.getLatest(activeTrip.id);
+                if (locRes.data) {
+                    updateTruckModal(locRes.data);
+                }
+            } catch (e) { }
+
+            Socket.on('tracking:location-update', (data) => {
+                if (data.tripId === activeTrip.id) {
+                    updateTruckModal(data);
+                }
+            });
+        }
+
+        function updateTruckModal(data) {
+            const { latitude, longitude } = data;
+            const latLng = [latitude, longitude];
+
+            if (truckMarker) {
+                truckMarker.setLatLng(latLng);
+            } else {
+                truckMarker = L.marker(latLng).addTo(mapTruck);
+            }
+            mapTruck.setView(latLng, 14);
+            document.getElementById('truck-loc-text').textContent = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+            document.getElementById('truck-last-update').textContent = new Date().toLocaleTimeString();
+        }
+
+        // --- SHARED DATA LOADING ---
+        async function loadData(type) {
+            try {
+                if (type === 'trips') {
+                    const res = await API.trips.list();
+                    UI.renderList('list-trips', res.data.trips, tripCardGlobal);
+                } else if (type === 'drivers') {
+                    const res = await API.drivers.list();
+                    UI.renderList('list-drivers', res.data.drivers, driverCardData);
+                } else if (type === 'trucks') {
+                    const res = await API.trucks.list();
+                    UI.renderList('list-trucks', res.data.trucks, truckCard);
+                    updateTruckStatuses(res.data.trucks);
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        const tripCardGlobal = (trip) => `<div class="bg-white p-4 rounded shadow"><b>Trip #${trip.id.substr(0, 4)}</b><br><span class="text-sm">${trip.status}</span></div>`;
+        const driverCardData = (d) => `<div class="bg-white p-4 rounded shadow"><b>${d.user.name}</b><br><span class="text-xs">${d.licenseNumber}</span></div>`;
+
+        function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+        async function loadDropdowns() {
+            try {
+                const drivers = await API.drivers.list();
+                const trucks = await API.trucks.list();
+                const dSelect = document.getElementById('trip-driver');
+                const tSelect = document.getElementById('trip-truck');
+                if (dSelect) dSelect.innerHTML = drivers.data.drivers.map(d => `<option value="${d.id}">${d.user.name}</option>`).join('');
+                if (tSelect) tSelect.innerHTML = trucks.data.trucks.map(t => `<option value="${t.id}">${t.registrationNumber}</option>`).join('');
+            } catch (e) { }
+        }
+
+        async function handleCreateTrip(e) {
+            e.preventDefault();
+            const driverId = document.getElementById('trip-driver').value;
+            const truckId = document.getElementById('trip-truck').value;
+            const route = document.getElementById('trip-route').value;
+            try {
+                await API.trips.create({ driverId, truckId, route }); // Assuming route handled backend side or ignored
+                UI.showToast("Trip Created!");
+                closeModal('modal-create-trip');
+                loadData('trips');
+            } catch (err) { }
+        }
+        function openNewChatModal() { document.getElementById('modal-create-thread').classList.remove('hidden'); }
+        async function handleCreateThread() {
+            const tripId = document.getElementById('chat-trip-id').value;
+            if (!tripId) return;
+            try {
+                await API.chat.createThread({ tripId, title: "Trip Chat" });
+                closeModal('modal-create-thread');
+                loadChatThreads();
+                UI.showToast("Chat created");
+            } catch (e) { UI.showToast(e.message, 'error') }
+        }
+        async function loadChatThreads() {
+            const res = await API.chat.getThreads();
+            document.getElementById('list-threads').innerHTML = res.data.map(t => `<div onclick="openChat('${t.id}')" class="p-4 border-b cursor-pointer hover:bg-gray-50">${t.title || 'Chat'}</div>`).join('');
+        }
+        async function openChat(id) {
+            currentThreadId = id;
+            document.getElementById('active-chat-container').classList.remove('hidden');
+            document.getElementById('chat-placeholder').classList.add('hidden');
+            Socket.joinChat(id);
+            const res = await API.chat.getMessages(id);
+            renderMessages(res.data.messages.reverse());
+        }
+        function renderMessages(msgs) {
+            document.getElementById('messages-list').innerHTML = msgs.map(m => `<div class="p-2 mb-2 rounded ${m.senderId === State.user.id ? 'bg-indigo-100 ml-auto' : 'bg-white border'} w-fit max-w-[80%]">${m.content}</div>`).join('');
+        }
+        async function handleSendMessage(e) {
+            e.preventDefault();
+            const inp = document.getElementById('msg-input');
+            if (currentThreadId && inp.value) {
+                await API.chat.sendMessage(currentThreadId, inp.value);
+                inp.value = '';
+                const res = await API.chat.getMessages(currentThreadId);
+                renderMessages(res.data.messages.reverse());
+            }
+        }
+
+    </script>
+</body>
+
+</html>

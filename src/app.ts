@@ -19,6 +19,7 @@ import chatRoutes from './chat/chat.routes';
 import itemRoutes from './items/item.routes';
 import exportRoutes from './export/export.routes';
 import healthRoutes from './health/health.routes';
+import mockLocationRoutes from './dev/mock-location.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -43,17 +44,15 @@ export function createApp(): Application {
   });
   app.use('/api/', limiter);
 
-  // OTP rate limiting: prevent OTP spam (3 per phone per 15 min is handled by MSG91, but we limit by IP too)
-  const otpLimiter = rateLimit({
+  // Auth rate limiting: prevent brute force on token verification
+  const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Max 10 OTP requests per IP per 15 minutes
-    message: 'Too many OTP requests, please try again later',
+    max: 20, // Max 20 auth requests per IP per 15 minutes
+    message: 'Too many authentication requests, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
   });
-  app.use('/api/v1/auth/send-otp', otpLimiter);
-  app.use('/api/v1/auth/resend-otp', otpLimiter);
-  app.use('/api/v1/auth/verify-otp', otpLimiter);
+  app.use('/api/v1/auth/verify-widget-token', authLimiter);
 
   // Refresh token rate limiting
   const refreshLimiter = rateLimit({
@@ -100,6 +99,11 @@ export function createApp(): Application {
   app.use('/api/v1/chat', chatRoutes);
   app.use('/api/v1/items', itemRoutes);
   app.use('/api/v1/exports', exportRoutes);
+
+  // Development-only routes (mock location simulator)
+  if (config.nodeEnv === 'development') {
+    app.use('/api/dev/mock-location', mockLocationRoutes);
+  }
 
   // 404 handler
   app.use('/{*path}', (req, res) => {

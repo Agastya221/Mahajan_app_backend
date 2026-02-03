@@ -32,10 +32,15 @@ export class HealthService {
         status: 'healthy',
         latency: `${latency}ms`,
       };
-    } catch (error) {
+    } catch (error: any) {
+      // Clean error for user consumption
+      let message = 'Unknown error';
+      if (error?.code) message = `Prisma Error ${error.code}: ${error.message.split('\n').pop()}`;
+      else if (error instanceof Error) message = error.message;
+
       return {
         status: 'unhealthy',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: message,
       };
     }
   }
@@ -53,38 +58,32 @@ export class HealthService {
         status: 'healthy',
         latency: `${latency}ms`,
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         status: 'unhealthy',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error.message || 'Redis unreachable',
       };
     }
   }
 
   private async getSystemMetrics() {
     try {
-      // Count active trips
-      const activeTrips = await prisma.trip.count({
-        where: {
-          status: {
-            in: [TripStatus.LOADED, TripStatus.IN_TRANSIT],
-          },
-        },
-      });
-
-      // Count total organizations
-      const totalOrgs = await prisma.org.count();
-
-      // Count total users
-      const totalUsers = await prisma.user.count();
+      // Safe DB stats
+      const [activeTrips, totalOrgs, totalUsers] = await Promise.all([
+        prisma.trip.count({
+          where: { status: { in: [TripStatus.LOADED, TripStatus.IN_TRANSIT] } },
+        }).catch(() => -1), // Return -1 if table/query fails
+        prisma.org.count().catch(() => -1),
+        prisma.user.count().catch(() => -1),
+      ]);
 
       // Get memory usage
       const memoryUsage = process.memoryUsage();
 
       return {
-        activeTrips,
-        totalOrgs,
-        totalUsers,
+        activeTrips: activeTrips === -1 ? 'N/A' : activeTrips,
+        totalOrgs: totalOrgs === -1 ? 'N/A' : totalOrgs,
+        totalUsers: totalUsers === -1 ? 'N/A' : totalUsers,
         memory: {
           heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
           heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
