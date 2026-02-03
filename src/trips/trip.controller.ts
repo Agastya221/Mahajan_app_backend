@@ -24,17 +24,20 @@ export class TripController {
   });
 
   getTrips = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, status } = req.query;
+    const { orgId, status, page, limit } = req.query;
 
-    const trips = await tripService.getTrips({
+    const result = await tripService.getTrips({
       orgId: orgId as string | undefined,
       status: status as TripStatus | undefined,
       userId: req.user!.id,
+      page: page ? parseInt(page as string, 10) : undefined,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
     });
 
     res.json({
       success: true,
-      data: trips,
+      data: result.trips,
+      pagination: result.pagination,
     });
   });
 

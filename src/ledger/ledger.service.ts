@@ -81,7 +81,9 @@ export class LedgerService {
     return { account: result, isNew: true };
   }
 
-  async getAccounts(orgId: string, userId: string) {
+  async getAccounts(orgId: string, userId: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(limit, 100);
+
     // Verify user is member of org
     const membership = await prisma.orgMember.findUnique({
       where: {
@@ -96,24 +98,32 @@ export class LedgerService {
       throw new ForbiddenError('Not a member of this organization');
     }
 
-    const accounts = await prisma.account.findMany({
-      where: {
-        ownerOrgId: orgId,
-      },
-      include: {
-        ownerOrg: {
-          select: { id: true, name: true, gstin: true },
-        },
-        counterpartyOrg: {
-          select: { id: true, name: true, gstin: true },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const where = { ownerOrgId: orgId };
 
-    return accounts;
+    const [accounts, total] = await Promise.all([
+      prisma.account.findMany({
+        where,
+        include: {
+          ownerOrg: {
+            select: { id: true, name: true, gstin: true },
+          },
+          counterpartyOrg: {
+            select: { id: true, name: true, gstin: true },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.account.count({ where }),
+    ]);
+
+    return {
+      accounts,
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
   }
 
   async getAccountById(accountId: string, userId: string) {
@@ -279,20 +289,30 @@ export class LedgerService {
     return result;
   }
 
-  async getInvoices(accountId: string, userId: string) {
+  async getInvoices(accountId: string, userId: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(limit, 100);
     await this.getAccountById(accountId, userId);
 
-    const invoices = await prisma.invoice.findMany({
-      where: { accountId },
-      include: {
-        attachments: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const where = { accountId };
+    const [invoices, total] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        include: {
+          attachments: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.invoice.count({ where }),
+    ]);
 
-    return invoices;
+    return {
+      invoices,
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
   }
 
   async updateInvoice(invoiceId: string, data: UpdateInvoiceDto, userId: string) {
@@ -383,24 +403,23 @@ export class LedgerService {
         });
       }
 
-      // ✅ BUSINESS LOGIC FIX: Validate sufficient balance before payment
-      const currentAccount = await tx.account.findUnique({
-        where: { id: data.accountId },
-        select: { balance: true },
-      });
+      // Row lock + balance validation to prevent race conditions
+      const [lockedAccount] = await tx.$queryRaw<Array<{ id: string; balance: bigint }>>`
+        SELECT id, balance FROM "Account" WHERE id = ${data.accountId} FOR UPDATE
+      `;
 
-      if (!currentAccount) {
+      if (!lockedAccount) {
         throw new Error('Account not found');
       }
 
-      if (currentAccount.balance < BigInt(data.amount)) {
+      if (lockedAccount.balance < BigInt(data.amount)) {
         throw new ValidationError(
-          `Insufficient balance. Current balance: ₹${(Number(currentAccount.balance) / 100).toFixed(2)}, ` +
+          `Insufficient balance. Current balance: ₹${(Number(lockedAccount.balance) / 100).toFixed(2)}, ` +
           `Payment amount: ₹${(Number(data.amount) / 100).toFixed(2)}`
         );
       }
 
-      // ✅ RACE CONDITION FIX: Use atomic decrement instead of read-modify-write
+      // Atomic decrement after lock
       const updatedAccount = await tx.account.update({
         where: { id: data.accountId },
         data: { balance: { decrement: data.amount } },
@@ -490,20 +509,30 @@ export class LedgerService {
     return result;
   }
 
-  async getPayments(accountId: string, userId: string) {
+  async getPayments(accountId: string, userId: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(limit, 100);
     await this.getAccountById(accountId, userId); // Verify access
 
-    const payments = await prisma.payment.findMany({
-      where: { accountId },
-      include: {
-        attachments: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const where = { accountId };
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        include: {
+          attachments: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.payment.count({ where }),
+    ]);
 
-    return payments;
+    return {
+      payments,
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
   }
 
   // Ledger Timeline

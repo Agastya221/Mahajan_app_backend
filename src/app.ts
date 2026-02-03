@@ -16,16 +16,23 @@ import tripRoutes from './trips/trip.routes';
 import trackingRoutes from './tracking/tracking.routes';
 import ledgerRoutes from './ledger/ledger.routes';
 import chatRoutes from './chat/chat.routes';
+import itemRoutes from './items/item.routes';
+import exportRoutes from './export/export.routes';
 import healthRoutes from './health/health.routes';
 
 export function createApp(): Application {
   const app = express();
+
+  // Trust proxy (required when behind load balancer / reverse proxy for correct rate limiting and IP detection)
+  app.set('trust proxy', 1);
 
   // Security middleware
   app.use(helmet());
   app.use(cors({
     origin: config.cors.origin,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
 
   // Rate limiting
@@ -36,15 +43,25 @@ export function createApp(): Application {
   });
   app.use('/api/', limiter);
 
-  // ✅ SECURITY FIX: Stricter rate limiting for auth endpoints
-  const authLimiter = rateLimit({
+  // OTP rate limiting: prevent OTP spam (3 per phone per 15 min is handled by MSG91, but we limit by IP too)
+  const otpLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Only 5 login attempts per 15 minutes
-    skipSuccessfulRequests: true, // Don't count successful logins
-    message: 'Too many login attempts, please try again in 15 minutes',
+    max: 10, // Max 10 OTP requests per IP per 15 minutes
+    message: 'Too many OTP requests, please try again later',
+    standardHeaders: true,
+    legacyHeaders: false,
   });
-  app.use('/api/v1/auth/login', authLimiter);
-  app.use('/api/v1/auth/refresh', authLimiter);
+  app.use('/api/v1/auth/send-otp', otpLimiter);
+  app.use('/api/v1/auth/resend-otp', otpLimiter);
+  app.use('/api/v1/auth/verify-otp', otpLimiter);
+
+  // Refresh token rate limiting
+  const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 30, // Max 30 refresh requests per IP per 15 minutes
+    message: 'Too many token refresh requests',
+  });
+  app.use('/api/v1/auth/refresh', refreshLimiter);
 
   // ✅ CRITICAL FIX: Strict rate limiting for high-volume tracking endpoint
   const trackingLimiter = rateLimit({
@@ -56,9 +73,9 @@ export function createApp(): Application {
   });
   app.use('/api/v1/tracking/ping', trackingLimiter);
 
-  // Body parsing
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Body parsing — 1MB is sufficient for JSON payloads (files use presigned S3 URLs)
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   // Request logging (development only)
   if (config.nodeEnv === 'development') {
@@ -81,6 +98,8 @@ export function createApp(): Application {
   app.use('/api/v1/tracking', trackingRoutes);
   app.use('/api/v1/ledger', ledgerRoutes);
   app.use('/api/v1/chat', chatRoutes);
+  app.use('/api/v1/items', itemRoutes);
+  app.use('/api/v1/exports', exportRoutes);
 
   // 404 handler
   app.use('/{*path}', (req, res) => {

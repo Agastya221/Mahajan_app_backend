@@ -1,4 +1,4 @@
-import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuid } from 'uuid';
 import prisma from '../config/database';
@@ -104,13 +104,52 @@ export class FileService {
     };
   }
 
-  async generateDownloadUrl(fileId: string) {
+  async generateDownloadUrl(fileId: string, userId: string) {
     const file = await prisma.attachment.findUnique({
       where: { id: fileId },
+      include: {
+        loadCard: { select: { tripId: true } },
+        receiveCard: { select: { tripId: true } },
+        invoice: { select: { accountId: true } },
+        payment: { select: { accountId: true } },
+      },
     });
 
     if (!file) {
       throw new NotFoundError('File not found');
+    }
+
+    // Verify user has access to this file via ownership or related entity membership
+    if (file.uploadedBy !== userId) {
+      let hasAccess = false;
+
+      // Check via trip (load card or receive card)
+      const tripId = file.loadCard?.tripId || file.receiveCard?.tripId;
+      if (tripId) {
+        const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+        if (trip) {
+          const membership = await prisma.orgMember.findFirst({
+            where: { userId, orgId: { in: [trip.sourceOrgId, trip.destinationOrgId] } },
+          });
+          if (membership) hasAccess = true;
+        }
+      }
+
+      // Check via account (invoice or payment)
+      const accountId = file.invoice?.accountId || file.payment?.accountId;
+      if (!hasAccess && accountId) {
+        const account = await prisma.account.findUnique({ where: { id: accountId } });
+        if (account) {
+          const membership = await prisma.orgMember.findFirst({
+            where: { userId, orgId: { in: [account.ownerOrgId, account.counterpartyOrgId] } },
+          });
+          if (membership) hasAccess = true;
+        }
+      }
+
+      if (!hasAccess) {
+        throw new ValidationError('Not authorized to download this file');
+      }
     }
 
     // Generate presigned GET URL (valid for 1 hour)
@@ -152,6 +191,18 @@ export class FileService {
     // Only the uploader can delete
     if (file.uploadedBy !== userId) {
       throw new ValidationError('Unauthorized to delete this file');
+    }
+
+    // Delete from S3 first
+    if (file.s3Key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: config.aws.s3Bucket,
+          Key: file.s3Key,
+        }));
+      } catch {
+        // Log but don't block deletion if S3 cleanup fails
+      }
     }
 
     await prisma.attachment.delete({

@@ -47,40 +47,49 @@ export class TruckService {
     return truck;
   }
 
-  async getTrucks(orgId?: string) {
+  async getTrucks(orgId?: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(limit, 100);
     const where = orgId ? { orgId } : {};
 
-    const trucks = await prisma.truck.findMany({
-      where,
-      include: {
-        org: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        trips: {
-          where: {
-            status: {
-              in: ['CREATED', 'ASSIGNED', 'LOADED', 'IN_TRANSIT'],
+    const [trucks, total] = await Promise.all([
+      prisma.truck.findMany({
+        where,
+        include: {
+          org: {
+            select: {
+              id: true,
+              name: true,
             },
           },
-          select: {
-            id: true,
-            status: true,
+          trips: {
+            where: {
+              status: {
+                in: ['CREATED', 'ASSIGNED', 'LOADED', 'IN_TRANSIT'],
+              },
+            },
+            select: {
+              id: true,
+              status: true,
+            },
           },
         },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.truck.count({ where }),
+    ]);
 
-    return trucks.map((truck) => ({
-      ...truck,
-      isActive: truck.trips.length > 0,
-      activeTripsCount: truck.trips.length,
-    }));
+    return {
+      trucks: trucks.map((truck) => ({
+        ...truck,
+        isActive: truck.trips.length > 0,
+        activeTripsCount: truck.trips.length,
+      })),
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
   }
 
   async getTruckById(truckId: string) {

@@ -29,7 +29,7 @@ export class FileController {
 
   getDownloadUrl = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { fileId } = req.params;
-    const result = await fileService.generateDownloadUrl(fileId);
+    const result = await fileService.generateDownloadUrl(fileId, req.user!.id);
 
     res.json({
       success: true,

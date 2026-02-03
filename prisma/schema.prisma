@@ -1,7 +1,7 @@
 // prisma/schema.prisma
-// ✅ Org-to-Org (Mahajan to Mahajan) version
+// ✅ Mahajan Network Platform v2.0
+// UPDATED: Multi-item trips, flexible items, custom units, rate/amount fields
 // Source Mahajan (collector) -> Destination Mahajan (city/distributor)
-// Includes: Load Card, Receive Card, Chat with Ledger, Driver Profile, GST badge, map tracking.
 
 generator client {
   provider = "prisma-client-js"
@@ -10,6 +10,10 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ============================================
+// ENUMS
+// ============================================
 
 enum UserRole {
   MAHAJAN_OWNER
@@ -59,13 +63,21 @@ enum TripEventType {
   NOTE
 }
 
+// ✅ UPDATED: Added more common units
 enum QuantityUnit {
   KG
   BAG
   TON
   CRATE
   BOX
-  OTHER
+  BUNDLE    // NEW: Common for leafy vegetables
+  TRAY      // NEW: For tomatoes, eggs
+  SACK      // NEW: Same as bag but larger
+  PETI      // NEW: Hindi for box/crate
+  DOZEN     // NEW: For eggs, lemons
+  PIECE     // NEW: For large items (watermelon)
+  QUINTAL   // NEW: 100 kg (common in mandi)
+  OTHER     // When custom unit is needed
 }
 
 enum PaymentTag {
@@ -85,25 +97,21 @@ enum AttachmentType {
 }
 
 enum LedgerDirection {
-  // Convention:
-  // PAYABLE = this org owes the counterparty
-  // RECEIVABLE = this org should receive from the counterparty
   PAYABLE
   RECEIVABLE
 }
 
+// ============================================
+// ORGANIZATION & USER MODELS
+// ============================================
+
 model Org {
-  // ✅ Every Mahajan is an Org
   id        String          @id @default(cuid())
   name      String
   city      String?
   phone     String?
   address   String?
-
-  // optional GST badge in chat header
   gstin     String?         @unique
-
-  // helps UI label: Source collector / Destination distributor
   roleType  MahajanRoleType @default(BOTH)
 
   createdAt DateTime @default(now())
@@ -113,27 +121,26 @@ model Org {
   trucks    Truck[]
   drivers   DriverProfile[]
 
-  // trips where org is source/destination
   sourceTrips      Trip[] @relation("SourceOrgTrips")
   destinationTrips Trip[] @relation("DestinationOrgTrips")
 
-  // ledger accounts
   accountsAsOwner        Account[] @relation("AccountOwnerOrg")
   accountsAsCounterparty Account[] @relation("AccountCounterpartyOrg")
 
-  // chat threads (ledger/trip)
   chatThreads ChatThread[]
+  
+  // ✅ NEW: Item Master & Export Logs
+  items      Item[]
+  exportLogs ExportLog[]
 }
 
 model User {
-  id        String   @id @default(cuid())
-  role      UserRole
-  name      String
-  phone     String   @unique
-  passwordHash String
-
-  // ✅ SECURITY FIX: Add account status for suspension/ban functionality
-  status       String   @default("ACTIVE") // ACTIVE, SUSPENDED, BANNED
+  id           String    @id @default(cuid())
+  role         UserRole
+  name         String
+  phone        String    @unique
+  passwordHash String?   // Optional — OTP-only users won't have a password
+  status       String    @default("ACTIVE")
   suspendedAt  DateTime?
   bannedAt     DateTime?
   statusReason String?
@@ -141,52 +148,65 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships   OrgMember[]
-  driverProfile DriverProfile?
-  sentMessages  ChatMessage[] @relation("SentMessages")
-  typingIndicators TypingIndicator[] @relation("TypingUsers")
-
-  createdLoadCards    TripLoadCard[]
-  createdReceiveCards TripReceiveCard[] @relation("CreatedReceiveCards")
+  memberships          OrgMember[]
+  driverProfile        DriverProfile?
+  sentMessages         ChatMessage[] @relation("SentMessages")
+  typingIndicators     TypingIndicator[] @relation("TypingUsers")
+  createdLoadCards     TripLoadCard[]
+  createdReceiveCards  TripReceiveCard[] @relation("CreatedReceiveCards")
   approvedReceiveCards TripReceiveCard[] @relation("ApprovedReceiveCards")
-  createdEvents       TripEvent[]
+  createdEvents        TripEvent[]
+  exportLogs           ExportLog[]
+  refreshTokens        RefreshToken[]
 
   @@index([status])
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  token      String    @unique  // opaque random hex string
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  family     String             // token family ID for rotation / breach detection
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  deviceInfo String?            // optional user-agent or device label
+
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([family])
+  @@index([expiresAt])
 }
 
 model OrgMember {
   id        String        @id @default(cuid())
   orgId     String
   org       Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
-
   userId    String
   user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   role      OrgMemberRole @default(STAFF)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([orgId, userId])
-  // ✅ PERFORMANCE FIX: Add indexes for common query patterns
   @@index([userId])
   @@index([orgId, role])
   @@index([userId, role])
 }
 
 model DriverProfile {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // which org primarily manages this driver (optional)
-  orgId     String?
-  org       Org?     @relation(fields: [orgId], references: [id], onDelete: SetNull)
-
-  licenseNo String?
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId          String?
+  org            Org?     @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  licenseNo      String?
   emergencyPhone String?
   notes          String?
-  deviceId       String?  @unique // For device binding
+  deviceId       String?  @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -199,10 +219,9 @@ model Truck {
   id        String   @id @default(cuid())
   orgId     String
   org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-
   number    String
   type      String?
-  capacity  Decimal? @db.Decimal(10, 2) // in tons
+  capacity  Decimal? @db.Decimal(10, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -212,53 +231,79 @@ model Truck {
   @@unique([orgId, number])
 }
 
-model Trip {
-  id        String   @id @default(cuid())
+// ============================================
+// ✅ NEW: FLEXIBLE ITEM MASTER
+// Mahajans can add any item: "Green Apple", "Kinnaur Apple", etc.
+// ============================================
 
-  // ✅ BOTH sides are mahajans
+model Item {
+  id        String   @id @default(cuid())
+  
+  // Item can be org-specific or global (null orgId = shared)
+  orgId     String?
+  org       Org?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  name      String   // "Kinnaur Apple", "Green Apple", "Potato (Local)"
+  nameHindi String?  // "किन्नौर सेब" - for Hindi-first users
+  category  String?  // "Fruit", "Vegetable", "Packaging"
+  hsn       String?  // HSN code for GST (optional)
+  
+  // Default unit for this item
+  defaultUnit       QuantityUnit @default(KG)
+  defaultCustomUnit String?      // If defaultUnit is OTHER
+  
+  isActive  Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  loadItems    LoadItem[]
+  receiveItems ReceiveItem[]
+  
+  @@unique([orgId, name])
+  @@index([orgId, isActive])
+  @@index([category])
+  @@index([name])
+}
+
+// ============================================
+// TRIP & TRACKING MODELS
+// ============================================
+
+model Trip {
+  id               String   @id @default(cuid())
   sourceOrgId      String
   sourceOrg        Org      @relation("SourceOrgTrips", fields: [sourceOrgId], references: [id], onDelete: Restrict)
-
   destinationOrgId String
   destinationOrg   Org      @relation("DestinationOrgTrips", fields: [destinationOrgId], references: [id], onDelete: Restrict)
+  truckId          String
+  truck            Truck    @relation(fields: [truckId], references: [id], onDelete: Restrict)
+  driverId         String?
+  driver           DriverProfile? @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
 
-  // truck belongs to the source org (usually); but we keep only truckId
-  truckId   String
-  truck     Truck    @relation(fields: [truckId], references: [id], onDelete: Restrict)
-
-  driverId  String?
-  driver    DriverProfile? @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
-
-  startPoint         String?
-  endPoint           String?
-  startTime          DateTime?
-  eta                DateTime?
-  estimatedDistance   Float?
-  estimatedArrival   DateTime?
-  notes              String?
-
-  status    TripStatus @default(CREATED)
+  startPoint        String?
+  endPoint          String?
+  startTime         DateTime?
+  eta               DateTime?
+  estimatedDistance Float?
+  estimatedArrival  DateTime?
+  notes             String?
+  status            TripStatus @default(CREATED)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // map tracking
-  locations TripLocation[]
-  latestLoc TripLatestLocation?
-
-  // proof + disputes + timeline
-  loadCard    TripLoadCard?
-  receiveCard TripReceiveCard?
-  events      TripEvent[]
-  disputes    Dispute[]
-
-  // money + chat
-  invoices     Invoice[]
-  payments     Payment[]
+  locations     TripLocation[]
+  latestLoc     TripLatestLocation?
+  loadCard      TripLoadCard?
+  receiveCard   TripReceiveCard?
+  events        TripEvent[]
+  disputes      Dispute[]
+  invoices      Invoice[]
+  payments      Payment[]
   ledgerEntries LedgerEntry[]
-  chatThreads  ChatThread[]
+  chatThreads   ChatThread[]
 
-  // ✅ PERFORMANCE FIX: Add composite indexes for active trip lookups
   @@index([sourceOrgId, status, createdAt])
   @@index([destinationOrgId, status, createdAt])
   @@index([truckId, createdAt])
@@ -267,37 +312,97 @@ model Trip {
   @@index([truckId, status])
 }
 
+// ============================================
+// ✅ UPDATED: TripLoadCard (Multi-Item Support)
+// ============================================
+
 model TripLoadCard {
   id       String   @id @default(cuid())
   tripId   String   @unique
   trip     Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
-  quantity Decimal  @db.Decimal(12, 3)
-  unit     QuantityUnit
   loadedAt DateTime @default(now())
   remarks  String?
+  
+  // ✅ NEW: Summary fields (auto-calculated from items)
+  totalItems    Int      @default(0)
+  totalQuantity Decimal? @db.Decimal(14, 3)
+  totalAmount   Decimal? @db.Decimal(16, 2)
 
   createdByUserId String?
   createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  // ✅ NEW: Relation to items
+  items       LoadItem[]
   attachments Attachment[]
 
   @@index([loadedAt])
 }
+
+// ============================================
+// ✅ NEW: LoadItem (Multiple items per trip)
+// Example: Potato 50 bags + Onion 30 bags + Tomato 10 crates
+// ============================================
+
+model LoadItem {
+  id          String   @id @default(cuid())
+  
+  loadCardId  String
+  loadCard    TripLoadCard @relation(fields: [loadCardId], references: [id], onDelete: Cascade)
+  
+  // Link to Item Master (optional - can use free text for ad-hoc items)
+  itemId      String?
+  item        Item?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  
+  // Item details (denormalized for history + ad-hoc items)
+  itemName      String   // "Potato", "Onion", "Tomato"
+  itemNameHindi String?  // "आलू", "प्याज", "टमाटर"
+  
+  // Quantity
+  quantity    Decimal  @db.Decimal(12, 3)
+  unit        QuantityUnit @default(KG)
+  customUnit  String?  // When unit is OTHER: "Petty", "Dandi", etc.
+  
+  // ✅ NEW: Pricing (for invoicing & Excel export)
+  rate        Decimal? @db.Decimal(12, 2)  // ₹40.00 per bag
+  amount      Decimal? @db.Decimal(14, 2)  // ₹2000.00 (qty × rate)
+  
+  // Quality grading (optional)
+  grade       String?  // "A", "B", "Premium", "Regular"
+  remarks     String?
+  
+  sortOrder   Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  
+  // Relation to corresponding receive item
+  receiveItem ReceiveItem?
+  
+  @@index([loadCardId, sortOrder])
+  @@index([itemId])
+}
+
+// ============================================
+// ✅ UPDATED: TripReceiveCard (Multi-Item Support)
+// ============================================
 
 model TripReceiveCard {
   id        String   @id @default(cuid())
   tripId    String   @unique
   trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
-  quantity  Decimal  @db.Decimal(12, 3)
-  unit      QuantityUnit
   receivedAt DateTime @default(now())
-  shortage   Decimal? @db.Decimal(12, 3) // Auto-calculated: loaded - received
   remarks    String?
+  
+  // ✅ NEW: Summary fields (auto-calculated from items)
+  totalItems      Int      @default(0)
+  totalQuantity   Decimal? @db.Decimal(14, 3)
+  totalAmount     Decimal? @db.Decimal(16, 2)
+  totalShortage   Decimal? @db.Decimal(14, 3)
+  shortagePercent Decimal? @db.Decimal(5, 2)
 
-  // ✅ BUSINESS LOGIC FIX: Add approval workflow to prevent unilateral shortage claims
-  status           String  @default("PENDING") // PENDING, APPROVED, DISPUTED
+  // Approval workflow
+  status           String  @default("PENDING")
   approvedAt       DateTime?
   approvedByUserId String?
   approvedByUser   User?   @relation("ApprovedReceiveCards", fields: [approvedByUserId], references: [id], onDelete: SetNull)
@@ -306,24 +411,77 @@ model TripReceiveCard {
   createdByUserId String?
   createdByUser   User?   @relation("CreatedReceiveCards", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  // ✅ NEW: Relation to items
+  items       ReceiveItem[]
   attachments Attachment[]
 
   @@index([receivedAt])
   @@index([status])
 }
 
+// ============================================
+// ✅ NEW: ReceiveItem (With item-wise shortage)
+// Example: Loaded 50 bags → Received 48 bags → Shortage 2 bags
+// ============================================
+
+model ReceiveItem {
+  id            String   @id @default(cuid())
+  
+  receiveCardId String
+  receiveCard   TripReceiveCard @relation(fields: [receiveCardId], references: [id], onDelete: Cascade)
+  
+  // Link to corresponding LoadItem (for shortage calculation)
+  loadItemId    String?  @unique
+  loadItem      LoadItem? @relation(fields: [loadItemId], references: [id], onDelete: SetNull)
+  
+  // Link to Item Master
+  itemId        String?
+  item          Item?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  
+  // Item details (denormalized)
+  itemName      String
+  itemNameHindi String?
+  
+  // Quantity received
+  quantity      Decimal  @db.Decimal(12, 3)
+  unit          QuantityUnit @default(KG)
+  customUnit    String?
+  
+  // ✅ NEW: Shortage (auto-calculated: loadItem.quantity - this.quantity)
+  shortage        Decimal? @db.Decimal(12, 3)
+  shortagePercent Decimal? @db.Decimal(5, 2)
+  
+  // ✅ NEW: Pricing
+  rate          Decimal? @db.Decimal(12, 2)
+  amount        Decimal? @db.Decimal(14, 2)
+  
+  // Quality assessment at destination
+  grade         String?
+  qualityIssue  String?  // "Damaged", "Rotten", "Wet"
+  remarks       String?
+  
+  sortOrder     Int      @default(0)
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([receiveCardId, sortOrder])
+  @@index([itemId])
+}
+
+// ============================================
+// TRIP EVENTS & TRACKING
+// ============================================
+
 model TripEvent {
-  id        String       @id @default(cuid())
-  tripId    String
-  trip      Trip         @relation(fields: [tripId], references: [id], onDelete: Cascade)
-
-  eventType TripEventType
-  description String?
-  metaJson  Json?
-  atTime    DateTime     @default(now())
-
+  id              String       @id @default(cuid())
+  tripId          String
+  trip            Trip         @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  eventType       TripEventType
+  description     String?
+  metaJson        Json?
+  atTime          DateTime     @default(now())
   createdByUserId String?
-  createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByUser   User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([tripId, atTime])
   @@index([eventType, atTime])
@@ -333,16 +491,14 @@ model TripLocation {
   id         String   @id @default(cuid())
   tripId     String
   trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
-
   driverId   String?
   driver     DriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
-
   lat        Float
   lng        Float
   speed      Float?
   heading    Float?
   accuracy   Float?
-  batchId    String?  // For idempotency
+  batchId    String?
   capturedAt DateTime
   createdAt  DateTime @default(now())
 
@@ -354,7 +510,6 @@ model TripLocation {
 model TripLatestLocation {
   tripId     String   @id
   trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
-
   lat        Float
   lng        Float
   speed      Float?
@@ -364,20 +519,17 @@ model TripLatestLocation {
   updatedAt  DateTime @updatedAt
 }
 
+// ============================================
+// LEDGER (KHATA) MODELS
+// ============================================
+
 model Account {
-  // ✅ "Khata" between two Mahajans (Org <-> Org)
-  id        String @id @default(cuid())
-
-  // the org that is viewing/owning this account record
-  ownerOrgId String
-  ownerOrg   Org    @relation("AccountOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Cascade)
-
-  // the other mahajan
+  id                String @id @default(cuid())
+  ownerOrgId        String
+  ownerOrg          Org    @relation("AccountOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Cascade)
   counterpartyOrgId String
   counterpartyOrg   Org    @relation("AccountCounterpartyOrg", fields: [counterpartyOrgId], references: [id], onDelete: Restrict)
-
-  // Running balance (can be calculated from entries, but cached here for performance)
-  balance   BigInt @default(0) // paise
+  balance           BigInt @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -393,25 +545,20 @@ model Account {
 }
 
 model LedgerEntry {
-  id         String @id @default(cuid())
-
-  accountId  String
-  account    Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-
-  tripId     String?
-  trip       Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
-
-  direction  LedgerDirection
-  amount     BigInt // paise
-  balance    BigInt // Running balance after this entry
-  description String?
-  note       String?
-  tag        PaymentTag?
-
-  referenceType String? // "INVOICE" | "PAYMENT" | "TRIP"
+  id            String          @id @default(cuid())
+  accountId     String
+  account       Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tripId        String?
+  trip          Trip?           @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  direction     LedgerDirection
+  amount        BigInt
+  balance       BigInt
+  description   String?
+  note          String?
+  tag           PaymentTag?
+  referenceType String?
   referenceId   String?
-
-  createdAt  DateTime @default(now())
+  createdAt     DateTime        @default(now())
 
   chatMessages ChatMessage[]
 
@@ -420,53 +567,45 @@ model LedgerEntry {
 }
 
 model Invoice {
-  id        String @id @default(cuid())
-
-  accountId String
-  account   Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
-
-  tripId    String?
-  trip      Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
-
-  invoiceNumber String  // ✅ BUSINESS LOGIC FIX: Removed @unique - invoice numbers are org-specific, not global
-  total     BigInt  // paise
-  dueDate   DateTime?
-  status    String  @default("OPEN") // OPEN, PARTIAL, PAID, CANCELLED
-  description String?
+  id            String   @id @default(cuid())
+  accountId     String
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  tripId        String?
+  trip          Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  invoiceNumber String
+  total         BigInt
+  dueDate       DateTime?
+  status        String   @default("OPEN")
+  description   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  payments    Payment[]
-  attachments Attachment[]
+  payments     Payment[]
+  attachments  Attachment[]
   chatMessages ChatMessage[]
 
-  // ✅ BUSINESS LOGIC FIX: Invoice numbers unique per account (Mahajan A's INV-001 ≠ Mahajan B's INV-001)
   @@unique([accountId, invoiceNumber])
   @@index([accountId, status])
   @@index([dueDate])
 }
 
 model Payment {
-  id        String @id @default(cuid())
-
+  id        String   @id @default(cuid())
   accountId String?
   account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
-
   invoiceId String?
   invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-
   tripId    String?
   trip      Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
-
-  amount    BigInt   // paise
+  amount    BigInt
   paidAt    DateTime @default(now())
-  mode      String?  // CASH, UPI, BANK_TRANSFER, CHEQUE
-  reference String?  // Transaction ID
+  mode      String?
+  reference String?
   tag       PaymentTag?
   remarks   String?
 
-  attachments Attachment[]
+  attachments  Attachment[]
   chatMessages ChatMessage[]
 
   createdAt DateTime @default(now())
@@ -479,10 +618,9 @@ model Payment {
 model Dispute {
   id        String @id @default(cuid())
   tripId    String
-  trip      Trip    @relation(fields: [tripId], references: [id], onDelete: Cascade)
-
+  trip      Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
   reason    String
-  status    String @default("OPEN") // OPEN, RESOLVED, REJECTED
+  status    String @default("OPEN")
   notes     String?
 
   createdAt DateTime @default(now())
@@ -491,39 +629,34 @@ model Dispute {
   @@index([status, createdAt])
 }
 
+// ============================================
+// CHAT MODELS
+// ============================================
+
 model ChatThread {
   id        String @id @default(cuid())
-
-  // thread belongs to a mahajan org (who is using the app)
   orgId     String
   org       Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-
-  // optionally tied to a counterparty account (ledger chat)
   accountId String?
   account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
-
-  // optionally tied to a specific trip (trip chat)
   tripId    String?
   trip      Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
-  title     String?
-  type      String  @default("GENERAL") // LEDGER_CHAT, TRIP_CHAT, GENERAL
-
-  // ✅ WhatsApp-like features
-  lastMessageAt    DateTime?
-  lastMessageText  String?
-  unreadCount      Int @default(0)
-  isArchived       Boolean @default(false)
-  isPinned         Boolean @default(false)
-  pinnedAt         DateTime?
+  title           String?
+  type            String  @default("GENERAL")
+  lastMessageAt   DateTime?
+  lastMessageText String?
+  unreadCount     Int @default(0)
+  isArchived      Boolean @default(false)
+  isPinned        Boolean @default(false)
+  pinnedAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  messages  ChatMessage[]
+  messages         ChatMessage[]
   typingIndicators TypingIndicator[]
 
-  // ✅ CRITICAL FIX: Prevent duplicate threads for same account/trip
   @@unique([accountId])
   @@unique([tripId])
   @@index([orgId, updatedAt])
@@ -533,13 +666,10 @@ model ChatThread {
   @@index([tripId, updatedAt])
 }
 
-// ✅ Real-time typing indicators like WhatsApp
 model TypingIndicator {
   id        String @id @default(cuid())
-
   threadId  String
   thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-
   userId    String
   user      User @relation("TypingUsers", fields: [userId], references: [id], onDelete: Cascade)
   isTyping  Boolean @default(true)
@@ -552,48 +682,40 @@ model TypingIndicator {
 }
 
 model ChatMessage {
-  id        String @id @default(cuid())
-
-  threadId  String
-  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-
+  id           String @id @default(cuid())
+  threadId     String
+  thread       ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
   senderUserId String?
   senderUser   User? @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: SetNull)
 
-  content   String?
-  messageType String @default("TEXT") // TEXT, PAYMENT_NOTIFICATION, INVOICE_NOTIFICATION, SYSTEM_MESSAGE, LOCATION_SHARE, IMAGE, VOICE, DOCUMENT
-  tag       PaymentTag?
+  content     String?
+  messageType String @default("TEXT")
+  tag         PaymentTag?
 
-  // make chat transaction-aware
   paymentId     String?
   payment       Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-
   invoiceId     String?
   invoice       Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-
   ledgerEntryId String?
   ledgerEntry   LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
 
-  // ✅ WhatsApp-like features
-  isRead        Boolean @default(false)
-  readAt        DateTime?
-  isDelivered   Boolean @default(false)
-  deliveredAt   DateTime?
-  isEdited      Boolean @default(false)
-  editedAt      DateTime?
-  replyToId     String?
-  replyTo       ChatMessage? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies       ChatMessage[] @relation("MessageReplies")
+  isRead      Boolean @default(false)
+  readAt      DateTime?
+  isDelivered Boolean @default(false)
+  deliveredAt DateTime?
+  isEdited    Boolean @default(false)
+  editedAt    DateTime?
+  replyToId   String?
+  replyTo     ChatMessage? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     ChatMessage[] @relation("MessageReplies")
 
-  // For location sharing (lat, lng from tracking)
-  locationLat   Float?
-  locationLng   Float?
+  locationLat Float?
+  locationLng Float?
 
   attachments Attachment[]
 
   createdAt DateTime @default(now())
 
-  // ✅ PERFORMANCE FIX: Optimize indexes for common query patterns
   @@index([threadId, createdAt])
   @@index([paymentId])
   @@index([invoiceId])
@@ -602,39 +724,77 @@ model ChatMessage {
   @@index([threadId, senderUserId, isRead])
 }
 
+// ============================================
+// ATTACHMENTS
+// ============================================
+
 model Attachment {
   id        String         @id @default(cuid())
   type      AttachmentType @default(OTHER)
-
   url       String
-  s3Key     String?  @unique
+  s3Key     String?        @unique
   mimeType  String?
   fileName  String?
   sizeBytes Int?
-  status    String   @default("PENDING") // PENDING, COMPLETED, FAILED
-
-  uploadedBy String? // userId
+  status    String         @default("PENDING")
+  uploadedBy String?
 
   createdAt DateTime @default(now())
 
   loadCardId    String?
-  loadCard      TripLoadCard?   @relation(fields: [loadCardId], references: [id], onDelete: Cascade)
-
+  loadCard      TripLoadCard?    @relation(fields: [loadCardId], references: [id], onDelete: Cascade)
   receiveCardId String?
   receiveCard   TripReceiveCard? @relation(fields: [receiveCardId], references: [id], onDelete: Cascade)
-
   invoiceId     String?
-  invoice       Invoice?        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-
+  invoice       Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   paymentId     String?
-  payment       Payment?        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-
+  payment       Payment?         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   messageId     String?
-  message       ChatMessage?    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  message       ChatMessage?     @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([type, createdAt])
   @@index([status])
   @@index([invoiceId])
   @@index([paymentId])
   @@index([messageId])
+}
+
+// ============================================
+// ✅ NEW: EXPORT AUDIT LOG
+// Track all exports for GST compliance
+// ============================================
+
+model ExportLog {
+  id        String   @id @default(cuid())
+  
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Export details
+  exportType  String   // "LEDGER", "TRIPS", "FULL_REPORT"
+  format      String   // "XLSX", "PDF", "CSV"
+  
+  // Date range
+  startDate   DateTime
+  endDate     DateTime
+  
+  // Filters applied
+  counterpartyOrgId String?
+  filtersJson       Json?
+  
+  // File info
+  fileName    String
+  s3Key       String?
+  fileSize    Int?
+  rowCount    Int?
+  
+  createdByUserId String
+  createdByUser   User   @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  
+  @@index([orgId, createdAt])
+  @@index([createdByUserId])
+  @@index([exportType, createdAt])
 }

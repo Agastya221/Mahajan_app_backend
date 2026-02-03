@@ -69,32 +69,41 @@ export class DriverService {
     return driver;
   }
 
-  async getDrivers(orgId?: string) {
+  async getDrivers(orgId?: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(limit, 100);
     const where = orgId ? { orgId } : {};
 
-    const drivers = await prisma.driverProfile.findMany({
-      where,
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
+    const [drivers, total] = await Promise.all([
+      prisma.driverProfile.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+            },
+          },
+          org: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
         },
-        org: {
-          select: {
-            id: true,
-            name: true,
-          },
+        orderBy: {
+          createdAt: 'desc',
         },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.driverProfile.count({ where }),
+    ]);
 
-    return drivers;
+    return {
+      drivers,
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
   }
 
   async getDriverById(driverId: string) {

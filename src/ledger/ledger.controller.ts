@@ -25,7 +25,7 @@ export class LedgerController {
   });
 
   getAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId } = req.query;
+    const { orgId, page, limit } = req.query;
 
     if (!orgId) {
       return res.status(400).json({
@@ -34,11 +34,17 @@ export class LedgerController {
       });
     }
 
-    const accounts = await ledgerService.getAccounts(orgId as string, req.user!.id);
+    const result = await ledgerService.getAccounts(
+      orgId as string,
+      req.user!.id,
+      page ? parseInt(page as string, 10) : undefined,
+      limit ? parseInt(limit as string, 10) : undefined,
+    );
 
     res.json({
       success: true,
-      data: accounts,
+      data: result.accounts,
+      pagination: result.pagination,
     });
   });
 
@@ -65,11 +71,18 @@ export class LedgerController {
 
   getInvoices = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { accountId } = req.params;
-    const invoices = await ledgerService.getInvoices(accountId, req.user!.id);
+    const { page, limit } = req.query;
+    const result = await ledgerService.getInvoices(
+      accountId,
+      req.user!.id,
+      page ? parseInt(page as string, 10) : undefined,
+      limit ? parseInt(limit as string, 10) : undefined,
+    );
 
     res.json({
       success: true,
-      data: invoices,
+      data: result.invoices,
+      pagination: result.pagination,
     });
   });
 
@@ -97,11 +110,18 @@ export class LedgerController {
 
   getPayments = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { accountId } = req.params;
-    const payments = await ledgerService.getPayments(accountId, req.user!.id);
+    const { page, limit } = req.query;
+    const result = await ledgerService.getPayments(
+      accountId,
+      req.user!.id,
+      page ? parseInt(page as string, 10) : undefined,
+      limit ? parseInt(limit as string, 10) : undefined,
+    );
 
     res.json({
       success: true,
-      data: payments,
+      data: result.payments,
+      pagination: result.pagination,
     });
   });
 

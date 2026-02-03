@@ -19,16 +19,19 @@ export class ChatController {
   });
 
   getThreads = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { accountId, tripId } = req.query;
+    const { accountId, tripId, page, limit } = req.query;
 
-    const threads = await chatService.getThreads(req.user!.id, {
+    const result = await chatService.getThreads(req.user!.id, {
       accountId: accountId as string | undefined,
       tripId: tripId as string | undefined,
+      page: page ? parseInt(page as string, 10) : undefined,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
     });
 
     res.json({
       success: true,
-      data: threads,
+      data: result.threads,
+      pagination: result.pagination,
     });
   });
 

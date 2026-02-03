@@ -171,7 +171,7 @@ export class ChatService {
     return { thread, isNew };
   }
 
-  async getThreads(userId: string, filters?: { accountId?: string; tripId?: string }) {
+  async getThreads(userId: string, filters?: { accountId?: string; tripId?: string; page?: number; limit?: number }) {
     // Get all orgs user is member of
     const memberships = await prisma.orgMember.findMany({
       where: { userId },
@@ -181,7 +181,7 @@ export class ChatService {
     const orgIds = memberships.map(m => m.orgId);
 
     if (orgIds.length === 0) {
-      return [];
+      return { threads: [] as any[], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } };
     }
 
     // ✅ TYPE SAFETY FIX: Use proper Prisma types instead of any
@@ -216,42 +216,52 @@ export class ChatService {
       ];
     }
 
-    const threads = await prisma.chatThread.findMany({
-      where,
-      include: {
-        account: {
-          include: {
-            ownerOrg: {
-              select: { id: true, name: true, gstin: true },
-            },
-            counterpartyOrg: {
-              select: { id: true, name: true, gstin: true },
-            },
-          },
-        },
-        trip: {
-          include: {
-            sourceOrg: {
-              select: { id: true, name: true },
-            },
-            destinationOrg: {
-              select: { id: true, name: true },
-            },
-          },
-        },
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
-      // ✅ WhatsApp-like sorting: Pinned threads first, then by last message time
-      orderBy: [
-        { isPinned: 'desc' },
-        { lastMessageAt: 'desc' },
-      ],
-    });
+    const page = filters?.page || 1;
+    const limit = Math.min(filters?.limit || 20, 100);
 
-    return threads;
+    const [threads, total] = await Promise.all([
+      prisma.chatThread.findMany({
+        where,
+        include: {
+          account: {
+            include: {
+              ownerOrg: {
+                select: { id: true, name: true, gstin: true },
+              },
+              counterpartyOrg: {
+                select: { id: true, name: true, gstin: true },
+              },
+            },
+          },
+          trip: {
+            include: {
+              sourceOrg: {
+                select: { id: true, name: true },
+              },
+              destinationOrg: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+        orderBy: [
+          { isPinned: 'desc' },
+          { lastMessageAt: 'desc' },
+        ],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.chatThread.count({ where }),
+    ]);
+
+    return {
+      threads,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async getThreadById(threadId: string, userId: string) {

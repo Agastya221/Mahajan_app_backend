@@ -18,12 +18,17 @@ export class TruckController {
   });
 
   getTrucks = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId } = req.query;
-    const trucks = await truckService.getTrucks(orgId as string | undefined);
+    const { orgId, page, limit } = req.query;
+    const result = await truckService.getTrucks(
+      orgId as string | undefined,
+      page ? parseInt(page as string, 10) : undefined,
+      limit ? parseInt(limit as string, 10) : undefined,
+    );
 
     res.json({
       success: true,
-      data: trucks,
+      data: result.trucks,
+      pagination: result.pagination,
     });
   });
 

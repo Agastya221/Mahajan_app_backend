@@ -17,11 +17,15 @@ export const config = {
   },
 
   jwt: {
-    // ✅ SECURITY FIX: Separate secrets for access and refresh tokens
     accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET!,
-    refreshSecret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET!,
     accessExpiration: process.env.JWT_ACCESS_EXPIRATION || '15m',
-    refreshExpiration: process.env.JWT_REFRESH_EXPIRATION || '7d',
+    refreshTokenExpiryDays: parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS || '30'),
+  },
+
+  msg91: {
+    authKey: process.env.MSG91_AUTH_KEY!,
+    templateId: process.env.MSG91_TEMPLATE_ID!,
+    otpLength: parseInt(process.env.MSG91_OTP_LENGTH || '6'),
   },
 
   aws: {
@@ -44,16 +48,13 @@ export const config = {
 // Validate required environment variables
 const requiredEnvVars = [
   'DATABASE_URL',
-  'JWT_SECRET', // Can use single secret, but JWT_ACCESS_SECRET + JWT_REFRESH_SECRET recommended
+  'JWT_SECRET',
+  'MSG91_AUTH_KEY',
+  'MSG91_TEMPLATE_ID',
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'AWS_S3_BUCKET',
 ];
-
-// Warn if using same secret for both
-if (process.env.JWT_SECRET && (!process.env.JWT_ACCESS_SECRET || !process.env.JWT_REFRESH_SECRET)) {
-  console.warn('⚠️  SECURITY WARNING: Using same JWT_SECRET for both access and refresh tokens. Set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET for better security.');
-}
 
 for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {

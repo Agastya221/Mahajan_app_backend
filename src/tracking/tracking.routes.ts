@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { TrackingController } from './tracking.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { requireRole } from '../middleware/rbac.middleware';
+import { UserRole } from '@prisma/client';
 
 const router = Router();
 const trackingController = new TrackingController();
@@ -10,7 +12,7 @@ const trackingController = new TrackingController();
  * @desc    Submit batched GPS location pings
  * @access  Private (Driver only)
  */
-router.post('/ping', authenticate, trackingController.ping);
+router.post('/ping', authenticate, requireRole(UserRole.DRIVER), trackingController.ping);
 
 /**
  * @route   GET /api/v1/tracking/trips/:tripId/locations

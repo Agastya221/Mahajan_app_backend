@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/env';
 import { UnauthorizedError } from '../utils/errors';
 import prisma from '../config/database';
+import { AuthService } from '../auth/auth.service';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -24,12 +25,23 @@ export const authenticate = async (
       throw new UnauthorizedError('No token provided');
     }
 
-    // ✅ SECURITY FIX: Verify access token with access secret
+    // Check if token is blacklisted (logout)
+    const isBlacklisted = await AuthService.isTokenBlacklisted(token);
+    if (isBlacklisted) {
+      throw new UnauthorizedError('Token has been revoked');
+    }
+
     const decoded = jwt.verify(token, config.jwt.accessSecret) as {
       userId: string;
       phone: string;
       role: string;
+      type?: string;
     };
+
+    // Ensure this is an access token, not a refresh token
+    if (decoded.type && decoded.type !== 'access') {
+      throw new UnauthorizedError('Invalid token type');
+    }
 
     // ✅ SECURITY FIX: Verify user still exists and is active
     const user = await prisma.user.findUnique({

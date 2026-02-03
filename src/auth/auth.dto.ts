@@ -1,29 +1,39 @@
 import { z } from 'zod';
 import { phoneSchema } from '../utils/validators';
-import { UserRole } from '@prisma/client';
 
-// ✅ SECURITY FIX: Strong password validation
+// Step 1: Send OTP to phone
+export const sendOtpSchema = z.object({
+  phone: phoneSchema,
+});
+
+// Step 2: Verify OTP
+export const verifyOtpSchema = z.object({
+  phone: phoneSchema,
+  otp: z.string().min(4).max(8),
+});
+
+// Step 3: Register (only for new users, after OTP verified)
+// SaaS model: role is always MAHAJAN_STAFF on self-registration.
+// MAHAJAN_OWNER requires payment verification (admin-only upgrade).
+// DRIVER accounts are created by org admins, not self-registered.
 export const registerSchema = z.object({
-  phone: phoneSchema,
-  password: z.string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number')
-    .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  role: z.nativeEnum(UserRole).default(UserRole.MAHAJAN_STAFF),
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  verificationToken: z.string().min(1, 'Verification token is required'),
 });
 
-export const loginSchema = z.object({
+// Resend OTP
+export const resendOtpSchema = z.object({
   phone: phoneSchema,
-  password: z.string(),
+  retryType: z.enum(['voice', 'text']).optional(),
 });
 
+// Refresh token
 export const refreshTokenSchema = z.object({
-  refreshToken: z.string(),
+  refreshToken: z.string().min(1),
 });
 
+export type SendOtpDto = z.infer<typeof sendOtpSchema>;
+export type VerifyOtpDto = z.infer<typeof verifyOtpSchema>;
 export type RegisterDto = z.infer<typeof registerSchema>;
-export type LoginDto = z.infer<typeof loginSchema>;
+export type ResendOtpDto = z.infer<typeof resendOtpSchema>;
 export type RefreshTokenDto = z.infer<typeof refreshTokenSchema>;
