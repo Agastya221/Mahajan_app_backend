@@ -160,23 +160,35 @@ export class SocketGateway {
   }
 
   private subscribeToRedis() {
-    // Subscribe to all trip location channels using pattern matching
+    // Subscribe to all trip location and status channels using pattern matching
     redisSubscriber.psubscribe('trip:*:location', (err, count) => {
       if (err) {
-        console.error('Failed to subscribe to Redis channels:', err);
+        console.error('Failed to subscribe to Redis location channels:', err);
         return;
       }
-      console.log(`Subscribed to ${count} Redis channel pattern(s)`);
+      console.log(`Subscribed to ${count} Redis location channel pattern(s)`);
+    });
+
+    redisSubscriber.psubscribe('trip:*:status', (err, count) => {
+      if (err) {
+        console.error('Failed to subscribe to Redis status channels:', err);
+        return;
+      }
+      console.log(`Subscribed to ${count} Redis status channel pattern(s)`);
     });
 
     redisSubscriber.on('pmessage', (pattern, channel, message) => {
       try {
-        if (pattern === 'trip:*:location') {
-          const tripId = channel.split(':')[1];
-          const locationData = JSON.parse(message);
+        const tripId = channel.split(':')[1];
+        const data = JSON.parse(message);
 
-          // Broadcast to all sockets in the trip room
-          this.io.to(`trip:${tripId}`).emit('tracking:location-update', locationData);
+        if (pattern === 'trip:*:location') {
+          // Broadcast location update to all sockets in the trip room
+          this.io.to(`trip:${tripId}`).emit('tracking:location-update', data);
+        } else if (pattern === 'trip:*:status') {
+          // Broadcast status update (e.g., DELIVERED) to all sockets in the trip room
+          this.io.to(`trip:${tripId}`).emit('trip:status-update', data);
+          console.log(`📢 Broadcasted status update for trip ${tripId}:`, data.status);
         }
       } catch (error) {
         console.error('Error handling Redis message:', error);

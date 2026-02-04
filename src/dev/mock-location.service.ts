@@ -187,11 +187,35 @@ export class MockLocationService {
 
     const { currentIndex, route } = state;
 
-    // Check if we've reached the end
+    // Check if we've reached the end - MARK AS DELIVERED
     if (currentIndex >= route.length) {
-      // Loop back to start or stop
-      simulationState.set(tripId, { ...state, currentIndex: 0 });
-      logger.info(`🔄 Mock simulation for trip ${tripId} completed route, restarting from beginning`);
+      logger.info(`🎉 Mock simulation for trip ${tripId} reached destination - marking as DELIVERED`);
+
+      // Update trip status to DELIVERED
+      try {
+        await prisma.trip.update({
+          where: { id: tripId },
+          data: {
+            status: TripStatus.DELIVERED,
+          },
+        });
+
+        // Publish status update via Redis for WebSocket broadcast
+        const statusUpdate = {
+          tripId,
+          status: 'DELIVERED',
+          completedAt: new Date().toISOString(),
+          message: 'Trip has been delivered successfully',
+        };
+        await redisPublisher.publish(`trip:${tripId}:status`, JSON.stringify(statusUpdate));
+
+        logger.info(`✅ Trip ${tripId} marked as DELIVERED`);
+      } catch (error) {
+        logger.error(`Failed to update trip status to DELIVERED`, { tripId, error });
+      }
+
+      // Stop the simulation
+      this.stopSimulation(tripId);
       return;
     }
 

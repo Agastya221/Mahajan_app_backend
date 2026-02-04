@@ -53,7 +53,20 @@ export class Msg91Service {
    * 5. Backend calls this method to verify token and get phone number
    */
   async verifyWidgetToken(accessToken: string): Promise<{ phone: string }> {
-    // DEVELOPMENT MOCK BYPASS
+    // DEVELOPMENT TEST BYPASS
+    // Allows testing with format: dev_<phone>_<otp>
+    // Example: dev_916202923165_3434 → returns +916202923165
+    if (config.nodeEnv === 'development' && accessToken.startsWith('dev_')) {
+      const parts = accessToken.split('_');
+      if (parts.length >= 3 && parts[2] === '3434') {
+        const phone = parts[1].startsWith('+') ? parts[1] : `+${parts[1]}`;
+        logger.warn(`⚠️ DEV TEST BYPASS - Simulating OTP verification for phone: ${phone}`);
+        return { phone };
+      }
+      throw new ValidationError('Invalid dev token. Use: dev_<phone>_3434');
+    }
+
+    // DEVELOPMENT MOCK BYPASS (legacy)
     // Allows testing without MSG91 IP Whitelisting
     if (config.nodeEnv === 'development' && accessToken.startsWith('mock_')) {
       logger.warn('⚠️ USING MOCK MSG91 VERIFICATION - BYPASSING API CALL');

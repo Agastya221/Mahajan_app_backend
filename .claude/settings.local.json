@@ -14,7 +14,20 @@
       "Bash(node:*)",
       "Bash(curl:*)",
       "Bash(dir:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(python:*)",
+      "Bash(python -c:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWw2amI3c3EwMDAwNXNsMXZ5ZzdraXZuIiwicGhvbmUiOiIrOTE2MjAyOTIzMTY1Iiwicm9sZSI6Ik1BSEFKQU5fT1dORVIiLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzcwMTg1Nzk5LCJleHAiOjE3NzAxODY2OTl9.2BVtJeHoMkitmr0I8W0VDvMpMdxkJy41_4I5TElw1Mk\")",
+      "Bash(ORG_ID=\"cml6jba1v00055sl12lovyfxb\":*)",
+      "Bash(__NEW_LINE_5063785301585637__ echo \"=== API TEST RESULTS ===\")",
+      "Bash(__NEW_LINE_6436ca4c71ad1d3b__ echo \"\")",
+      "Bash(__NEW_LINE_95d66ae370cea861__ echo \"\")",
+      "Bash(__NEW_LINE_b0a5ba414a24d0ca__ echo \"\")",
+      "Bash(__NEW_LINE_fa1089f2d5c59a7a__ echo \"\")",
+      "Bash(__NEW_LINE_2302a36d973a4828__ echo \"\")",
+      "Bash(powershell:*)"
     ]
   }
 }

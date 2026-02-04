@@ -5,6 +5,12 @@ import { logger } from './utils/logger';
 import prisma from './config/database';
 import { redisClient } from './config/redis';
 
+// Fix BigInt serialization for JSON.stringify (used by Express res.json())
+// Prisma returns BigInt for balance fields, which JSON.stringify can't handle
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+
 // Import WebSocket gateway
 import { SocketGateway } from './websocket/socket.gateway';
 

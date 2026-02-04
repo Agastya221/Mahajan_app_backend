@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mahajan Network</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .screen { display: none; }
+    .screen.active { display: block; }
+    .nav-item.active { color: #1e40af; }
+    .nav-item.active svg { stroke: #1e40af; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-transit { background: #22c55e; }
+    .status-idle { background: #6b7280; }
+    .status-loaded { background: #f59e0b; }
+    #map { height: 300px; width: 100%; border-radius: 12px; }
+    .trip-timeline { border-left: 2px solid #e5e7eb; margin-left: 8px; padding-left: 20px; }
+    .timeline-dot { width: 12px; height: 12px; border-radius: 50%; background: #1e40af; position: absolute; left: -27px; top: 4px; }
+    .timeline-dot.completed { background: #22c55e; }
+    .timeline-dot.pending { background: #d1d5db; }
+    .loader { border: 3px solid #f3f3f3; border-top: 3px solid #1e40af; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .tab-active { border-bottom: 2px solid #1e40af; color: #1e40af; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+  <!-- Login Screen -->
+  <div id="loginScreen" class="screen active">
+    <div class="min-h-screen bg-gradient-to-b from-blue-900 to-blue-700 flex flex-col items-center justify-center p-6">
+      <div class="text-center mb-8">
+        <div class="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+          <svg class="w-12 h-12 text-blue-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold text-white">Mahajan Network</h1>
+        <p class="text-blue-200 mt-1">Logistics Made Simple</p>
+      </div>
+
+      <div class="w-full max-w-sm bg-white rounded-2xl p-6 shadow-xl">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Login with OTP</h2>
+
+        <div class="mb-4">
+          <label class="block text-sm text-gray-600 mb-1">Phone Number</label>
+          <div class="flex">
+            <span class="bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg px-3 py-3 text-gray-600">+91</span>
+            <input type="tel" id="phoneInput" class="flex-1 border border-gray-300 rounded-r-lg px-4 py-3 focus:outline-none focus:border-blue-500" placeholder="Enter phone number" maxlength="10">
+          </div>
+        </div>
+
+        <div id="otpSection" class="mb-4 hidden">
+          <label class="block text-sm text-gray-600 mb-1">Enter OTP</label>
+          <input type="text" id="otpInput" class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:border-blue-500 text-center text-2xl tracking-widest" placeholder="0000" maxlength="4">
+          <p class="text-xs text-gray-500 mt-2">For testing use: 3434</p>
+        </div>
+
+        <button id="loginBtn" onclick="handleLogin()" class="w-full bg-blue-800 text-white py-3 rounded-lg font-semibold hover:bg-blue-900 transition">
+          Send OTP
+        </button>
+
+        <p id="loginError" class="text-red-500 text-sm mt-3 hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Container -->
+  <div id="appContainer" class="hidden pb-20">
+
+    <!-- Header -->
+    <div class="bg-blue-800 text-white px-4 py-4 sticky top-0 z-40">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-blue-200 text-sm">Welcome,</p>
+          <h1 id="userName" class="text-lg font-semibold">Loading...</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="refreshData()" class="p-2 hover:bg-blue-700 rounded-full">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+          <button onclick="logout()" class="p-2 hover:bg-blue-700 rounded-full">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dashboard Screen -->
+    <div id="dashboardScreen" class="screen active p-4">
+      <!-- Balance Cards -->
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+          <p class="text-gray-500 text-xs mb-1">Total Receivable</p>
+          <p id="totalReceivable" class="text-xl font-bold text-green-600">₹0</p>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+          <p class="text-gray-500 text-xs mb-1">Total Payable</p>
+          <p id="totalPayable" class="text-xl font-bold text-red-500">₹0</p>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
+        <h3 class="font-semibold text-gray-800 mb-3">Quick Actions</h3>
+        <div class="grid grid-cols-4 gap-2">
+          <button onclick="showScreen('trucksScreen')" class="flex flex-col items-center p-3 hover:bg-gray-50 rounded-lg">
+            <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mb-1">
+              <svg class="w-5 h-5 text-blue-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+              </svg>
+            </div>
+            <span class="text-xs text-gray-600">Trucks</span>
+          </button>
+          <button onclick="showScreen('tripsScreen')" class="flex flex-col items-center p-3 hover:bg-gray-50 rounded-lg">
+            <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-1">
+              <svg class="w-5 h-5 text-green-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+              </svg>
+            </div>
+            <span class="text-xs text-gray-600">Trips</span>
+          </button>
+          <button onclick="showScreen('ledgerScreen')" class="flex flex-col items-center p-3 hover:bg-gray-50 rounded-lg">
+            <div class="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center mb-1">
+              <svg class="w-5 h-5 text-yellow-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+            <span class="text-xs text-gray-600">Ledger</span>
+          </button>
+          <button onclick="showScreen('driversScreen')" class="flex flex-col items-center p-3 hover:bg-gray-50 rounded-lg">
+            <div class="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center mb-1">
+              <svg class="w-5 h-5 text-purple-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+              </svg>
+            </div>
+            <span class="text-xs text-gray-600">Drivers</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Recent Trips -->
+      <div class="bg-white rounded-xl p-4 shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold text-gray-800">Recent Trips</h3>
+          <button onclick="showScreen('tripsScreen')" class="text-blue-600 text-sm">View All</button>
+        </div>
+        <div id="recentTrips" class="space-y-3">
+          <div class="flex items-center justify-center py-8">
+            <div class="loader"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trucks Screen -->
+    <div id="trucksScreen" class="screen p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">My Trucks</h2>
+        <span id="truckCount" class="text-sm text-gray-500">0 trucks</span>
+      </div>
+      <div id="trucksList" class="space-y-3">
+        <div class="flex items-center justify-center py-8">
+          <div class="loader"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trips Screen -->
+    <div id="tripsScreen" class="screen p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">All Trips</h2>
+        <select id="tripFilter" onchange="filterTrips()" class="border border-gray-300 rounded-lg px-3 py-1 text-sm">
+          <option value="">All Status</option>
+          <option value="IN_TRANSIT">In Transit</option>
+          <option value="LOADED">Loaded</option>
+          <option value="DELIVERED">Delivered</option>
+          <option value="CREATED">Created</option>
+        </select>
+      </div>
+      <div id="tripsList" class="space-y-3">
+        <div class="flex items-center justify-center py-8">
+          <div class="loader"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trip Detail / Tracking Screen -->
+    <div id="trackingScreen" class="screen">
+      <div class="bg-white">
+        <!-- Back Button -->
+        <div class="flex items-center gap-3 p-4 border-b">
+          <button onclick="showScreen('tripsScreen')" class="p-1">
+            <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <h2 class="text-lg font-semibold text-gray-800">Truck Location</h2>
+        </div>
+
+        <!-- Map -->
+        <div id="map" class="mx-4 mt-4"></div>
+
+        <!-- Trip Info Card -->
+        <div class="p-4">
+          <div class="bg-blue-50 rounded-xl p-4 mb-4">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-12 h-12 bg-blue-800 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p id="trackTruckNumber" class="font-bold text-gray-800">--</p>
+                <p id="trackDriverName" class="text-sm text-gray-600">--</p>
+              </div>
+              <div id="trackStatus" class="px-3 py-1 bg-green-500 text-white text-xs rounded-full">--</div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p class="text-gray-500">ETA</p>
+                <p id="trackETA" class="font-semibold">--</p>
+              </div>
+              <div>
+                <p class="text-gray-500">Distance</p>
+                <p id="trackDistance" class="font-semibold">--</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Route Info -->
+          <div class="mb-4">
+            <div class="flex items-start gap-3">
+              <div class="flex flex-col items-center">
+                <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div class="w-0.5 h-8 bg-gray-300"></div>
+                <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+              </div>
+              <div class="flex-1">
+                <p id="trackFrom" class="text-sm font-medium text-gray-800">--</p>
+                <p class="text-xs text-gray-500 mb-4">Origin</p>
+                <p id="trackTo" class="text-sm font-medium text-gray-800">--</p>
+                <p class="text-xs text-gray-500">Destination</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Load Items -->
+          <div class="mb-4">
+            <h3 class="font-semibold text-gray-800 mb-2">Load Items</h3>
+            <div id="trackLoadItems" class="space-y-2">
+              <p class="text-gray-500 text-sm">No items loaded</p>
+            </div>
+          </div>
+
+          <!-- Timeline -->
+          <div>
+            <h3 class="font-semibold text-gray-800 mb-3">Trip Timeline</h3>
+            <div id="trackTimeline" class="trip-timeline space-y-4">
+              <p class="text-gray-500 text-sm">No events</p>
+            </div>
+          </div>
+
+          <!-- Mock Location Control (Dev) -->
+          <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p class="text-xs text-yellow-800 mb-2">Dev: Mock Location Simulator</p>
+            <div class="flex gap-2">
+              <button id="startMockBtn" onclick="startMockLocation()" class="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm">Start Simulation</button>
+              <button id="stopMockBtn" onclick="stopMockLocation()" class="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm">Stop</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ledger Screen -->
+    <div id="ledgerScreen" class="screen p-4">
+      <h2 class="text-lg font-semibold text-gray-800 mb-4">Ledger (Khata)</h2>
+      <div id="ledgerList" class="space-y-3">
+        <div class="flex items-center justify-center py-8">
+          <div class="loader"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drivers Screen -->
+    <div id="driversScreen" class="screen p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">Drivers</h2>
+        <span id="driverCount" class="text-sm text-gray-500">0 drivers</span>
+      </div>
+      <div id="driversList" class="space-y-3">
+        <div class="flex items-center justify-center py-8">
+          <div class="loader"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-50">
+      <div class="flex justify-around">
+        <button onclick="showScreen('dashboardScreen')" class="nav-item active flex flex-col items-center px-3 py-1" data-screen="dashboardScreen">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+          </svg>
+          <span class="text-xs mt-1">Home</span>
+        </button>
+        <button onclick="showScreen('trucksScreen')" class="nav-item flex flex-col items-center px-3 py-1" data-screen="trucksScreen">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+          </svg>
+          <span class="text-xs mt-1">Trucks</span>
+        </button>
+        <button onclick="showScreen('tripsScreen')" class="nav-item flex flex-col items-center px-3 py-1" data-screen="tripsScreen">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+          </svg>
+          <span class="text-xs mt-1">Trips</span>
+        </button>
+        <button onclick="showScreen('ledgerScreen')" class="nav-item flex flex-col items-center px-3 py-1" data-screen="ledgerScreen">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span class="text-xs mt-1">Ledger</span>
+        </button>
+      </div>
+    </nav>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = 'http://localhost:3000';
+    let accessToken = localStorage.getItem('accessToken');
+    let refreshToken = localStorage.getItem('refreshToken');
+    let currentUser = null;
+    let currentOrg = null;
+    let socket = null;
+    let map = null;
+    let marker = null;
+    let allTrips = [];
+    let currentTripId = null;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      if (accessToken) {
+        checkAuthAndLoad();
+      }
+    });
+
+    // Auth Functions
+    async function checkAuthAndLoad() {
+      try {
+        const res = await api('/api/v1/orgs');
+        if (res.success && res.data.length > 0) {
+          currentOrg = res.data[0];
+          currentUser = { name: currentOrg.name.split('(')[0].trim() };
+          showApp();
+          loadAllData();
+        } else {
+          logout();
+        }
+      } catch (e) {
+        console.error('Auth check failed:', e);
+        logout();
+      }
+    }
+
+    let otpSent = false;
+    function handleLogin() {
+      const phone = document.getElementById('phoneInput').value.trim();
+      const btn = document.getElementById('loginBtn');
+
+      if (!otpSent) {
+        if (phone.length !== 10) {
+          showError('Enter valid 10-digit phone number');
+          return;
+        }
+        // Show OTP input
+        document.getElementById('otpSection').classList.remove('hidden');
+        btn.textContent = 'Verify OTP';
+        otpSent = true;
+      } else {
+        // Verify OTP
+        const otp = document.getElementById('otpInput').value.trim();
+        if (otp.length !== 4) {
+          showError('Enter 4-digit OTP');
+          return;
+        }
+        verifyOTP(phone, otp);
+      }
+    }
+
+    async function verifyOTP(phone, otp) {
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="loader mx-auto"></div>';
+
+      try {
+        // Use dev bypass token
+        const devToken = `dev_91${phone}_${otp}`;
+        const res = await fetch(`${API_BASE}/api/v1/auth/verify-widget-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: devToken })
+        });
+
+        const data = await res.json();
+
+        if (data.success && data.tokens) {
+          accessToken = data.tokens.accessToken;
+          refreshToken = data.tokens.refreshToken;
+          localStorage.setItem('accessToken', accessToken);
+          localStorage.setItem('refreshToken', refreshToken);
+          currentUser = data.user;
+          checkAuthAndLoad();
+        } else if (data.isNewUser) {
+          showError('New user. Registration needed.');
+        } else {
+          showError(data.message || 'Login failed');
+        }
+      } catch (e) {
+        showError('Network error. Try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify OTP';
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('loginError');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 3000);
+    }
+
+    function logout() {
+      accessToken = null;
+      refreshToken = null;
+      currentUser = null;
+      currentOrg = null;
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      if (socket) socket.disconnect();
+      document.getElementById('loginScreen').classList.add('active');
+      document.getElementById('appContainer').classList.add('hidden');
+      otpSent = false;
+      document.getElementById('otpSection').classList.add('hidden');
+      document.getElementById('loginBtn').textContent = 'Send OTP';
+    }
+
+    function showApp() {
+      document.getElementById('loginScreen').classList.remove('active');
+      document.getElementById('appContainer').classList.remove('hidden');
+      document.getElementById('userName').textContent = currentUser?.name || 'User';
+      connectWebSocket();
+    }
+
+    // API Helper
+    async function api(endpoint, options = {}) {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          ...options.headers
+        }
+      });
+
+      if (res.status === 401) {
+        // Try refresh token
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          return api(endpoint, options);
+        }
+        logout();
+        throw new Error('Session expired');
+      }
+
+      return res.json();
+    }
+
+    async function refreshAccessToken() {
+      if (!refreshToken) return false;
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken })
+        });
+        const data = await res.json();
+        if (data.success && data.tokens) {
+          accessToken = data.tokens.accessToken;
+          refreshToken = data.tokens.refreshToken;
+          localStorage.setItem('accessToken', accessToken);
+          localStorage.setItem('refreshToken', refreshToken);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    // Data Loading
+    async function loadAllData() {
+      await Promise.all([
+        loadDashboard(),
+        loadTrucks(),
+        loadTrips(),
+        loadDrivers(),
+        loadLedger()
+      ]);
+    }
+
+    async function refreshData() {
+      await loadAllData();
+    }
+
+    async function loadDashboard() {
+      // Load ledger for balance
+      try {
+        const ledger = await api(`/api/v1/ledger/accounts?orgId=${currentOrg.id}`);
+        let receivable = 0, payable = 0;
+        ledger.data?.forEach(acc => {
+          const bal = parseInt(acc.balance) / 100;
+          if (bal > 0) receivable += bal;
+          else payable += Math.abs(bal);
+        });
+        document.getElementById('totalReceivable').textContent = `₹${receivable.toLocaleString()}`;
+        document.getElementById('totalPayable').textContent = `₹${payable.toLocaleString()}`;
+      } catch (e) {}
+
+      // Recent trips
+      try {
+        const trips = await api(`/api/v1/trips?orgId=${currentOrg.id}&limit=3`);
+        renderRecentTrips(trips.data || []);
+      } catch (e) {}
+    }
+
+    function renderRecentTrips(trips) {
+      const container = document.getElementById('recentTrips');
+      if (!trips.length) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-4">No trips found</p>';
+        return;
+      }
+      container.innerHTML = trips.map(trip => `
+        <div onclick="openTripDetail('${trip.id}')" class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+          <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-blue-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-gray-800 text-sm">${trip.destinationOrg?.name || 'Unknown'}</p>
+            <p class="text-xs text-gray-500">${trip.truck?.number || '--'}</p>
+          </div>
+          <span class="px-2 py-1 text-xs rounded-full ${getStatusClass(trip.status)}">${formatStatus(trip.status)}</span>
+        </div>
+      `).join('');
+    }
+
+    async function loadTrucks() {
+      try {
+        const res = await api(`/api/v1/trucks?orgId=${currentOrg.id}`);
+        const trucks = res.data || [];
+        document.getElementById('truckCount').textContent = `${trucks.length} trucks`;
+        renderTrucks(trucks);
+      } catch (e) {
+        document.getElementById('trucksList').innerHTML = '<p class="text-red-500 text-center">Failed to load trucks</p>';
+      }
+    }
+
+    function renderTrucks(trucks) {
+      const container = document.getElementById('trucksList');
+      if (!trucks.length) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-4">No trucks found</p>';
+        return;
+      }
+      container.innerHTML = trucks.map(truck => {
+        const activeTrip = truck.trips?.find(t => ['IN_TRANSIT', 'LOADED'].includes(t.status));
+        const status = activeTrip?.status || 'IDLE';
+        return `
+          <div onclick="${activeTrip ? `openTripDetail('${activeTrip.id}')` : ''}" class="bg-white rounded-xl p-4 shadow-sm ${activeTrip ? 'cursor-pointer hover:shadow-md' : ''}">
+            <div class="flex items-center gap-3">
+              <div class="w-14 h-14 bg-orange-100 rounded-xl flex items-center justify-center">
+                <svg class="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                </svg>
+              </div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2">
+                  <p class="font-bold text-gray-800">${truck.number}</p>
+                  <span class="status-dot ${status === 'IN_TRANSIT' ? 'status-transit' : status === 'LOADED' ? 'status-loaded' : 'status-idle'}"></span>
+                </div>
+                <p class="text-sm text-gray-500">${truck.type || 'Truck'} • ${truck.capacity ? truck.capacity + ' kg' : '--'}</p>
+                <p class="text-xs ${status === 'IN_TRANSIT' ? 'text-green-600' : status === 'LOADED' ? 'text-yellow-600' : 'text-gray-400'}">${formatStatus(status)}</p>
+              </div>
+              ${activeTrip ? '<svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadTrips() {
+      try {
+        const res = await api(`/api/v1/trips?orgId=${currentOrg.id}`);
+        allTrips = res.data || [];
+        renderTrips(allTrips);
+      } catch (e) {
+        document.getElementById('tripsList').innerHTML = '<p class="text-red-500 text-center">Failed to load trips</p>';
+      }
+    }
+
+    function filterTrips() {
+      const status = document.getElementById('tripFilter').value;
+      const filtered = status ? allTrips.filter(t => t.status === status) : allTrips;
+      renderTrips(filtered);
+    }
+
+    function renderTrips(trips) {
+      const container = document.getElementById('tripsList');
+      if (!trips.length) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-4">No trips found</p>';
+        return;
+      }
+      container.innerHTML = trips.map(trip => `
+        <div onclick="openTripDetail('${trip.id}')" class="bg-white rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-gray-800">${trip.truck?.number || '--'}</span>
+            <span class="px-2 py-1 text-xs rounded-full ${getStatusClass(trip.status)}">${formatStatus(trip.status)}</span>
+          </div>
+          <div class="flex items-start gap-2 text-sm">
+            <div class="flex flex-col items-center mt-1">
+              <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+              <div class="w-0.5 h-4 bg-gray-300"></div>
+              <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+            </div>
+            <div class="flex-1">
+              <p class="text-gray-800">${trip.sourceOrg?.name || trip.startPoint || '--'}</p>
+              <p class="text-gray-500 text-xs mb-1">to</p>
+              <p class="text-gray-800">${trip.destinationOrg?.name || trip.endPoint || '--'}</p>
+            </div>
+          </div>
+          ${trip.driver ? `<p class="text-xs text-gray-500 mt-2">Driver: ${trip.driver.user?.name || '--'}</p>` : ''}
+        </div>
+      `).join('');
+    }
+
+    async function loadDrivers() {
+      try {
+        const res = await api(`/api/v1/drivers?orgId=${currentOrg.id}`);
+        const drivers = res.data || [];
+        document.getElementById('driverCount').textContent = `${drivers.length} drivers`;
+        renderDrivers(drivers);
+      } catch (e) {
+        document.getElementById('driversList').innerHTML = '<p class="text-red-500 text-center">Failed to load drivers</p>';
+      }
+    }
+
+    function renderDrivers(drivers) {
+      const container = document.getElementById('driversList');
+      if (!drivers.length) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-4">No drivers found</p>';
+        return;
+      }
+      container.innerHTML = drivers.map(driver => `
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+              <span class="text-purple-800 font-bold">${driver.user?.name?.charAt(0) || 'D'}</span>
+            </div>
+            <div class="flex-1">
+              <p class="font-semibold text-gray-800">${driver.user?.name || 'Unknown'}</p>
+              <p class="text-sm text-gray-500">${driver.user?.phone || '--'}</p>
+              <p class="text-xs text-gray-400">License: ${driver.licenseNo || '--'}</p>
+            </div>
+            <a href="tel:${driver.user?.phone}" class="p-2 bg-green-100 rounded-full">
+              <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+            </a>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function loadLedger() {
+      try {
+        const res = await api(`/api/v1/ledger/accounts?orgId=${currentOrg.id}`);
+        renderLedger(res.data || []);
+      } catch (e) {
+        document.getElementById('ledgerList').innerHTML = '<p class="text-red-500 text-center">Failed to load ledger</p>';
+      }
+    }
+
+    function renderLedger(accounts) {
+      const container = document.getElementById('ledgerList');
+      if (!accounts.length) {
+        container.innerHTML = '<p class="text-gray-500 text-center py-4">No accounts found</p>';
+        return;
+      }
+      container.innerHTML = accounts.map(acc => {
+        const balance = parseInt(acc.balance) / 100;
+        const isReceivable = balance > 0;
+        return `
+          <div class="bg-white rounded-xl p-4 shadow-sm">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center">
+                <span class="text-gray-600 font-bold">${acc.counterpartyOrg?.name?.charAt(0) || 'P'}</span>
+              </div>
+              <div class="flex-1">
+                <p class="font-semibold text-gray-800">${acc.counterpartyOrg?.name || 'Unknown'}</p>
+                <p class="text-xs text-gray-500">${acc.counterpartyOrg?.gstin || '--'}</p>
+              </div>
+              <div class="text-right">
+                <p class="font-bold ${isReceivable ? 'text-green-600' : 'text-red-500'}">₹${Math.abs(balance).toLocaleString()}</p>
+                <p class="text-xs ${isReceivable ? 'text-green-600' : 'text-red-500'}">${isReceivable ? 'Receivable' : 'Payable'}</p>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Trip Detail
+    async function openTripDetail(tripId) {
+      currentTripId = tripId;
+      showScreen('trackingScreen');
+
+      try {
+        const res = await api(`/api/v1/trips/${tripId}`);
+        const trip = res.data;
+
+        document.getElementById('trackTruckNumber').textContent = trip.truck?.number || '--';
+        document.getElementById('trackDriverName').textContent = trip.driver?.user?.name || 'No driver';
+        document.getElementById('trackStatus').textContent = formatStatus(trip.status);
+        document.getElementById('trackStatus').className = `px-3 py-1 text-xs rounded-full ${getStatusClass(trip.status)}`;
+        document.getElementById('trackETA').textContent = trip.estimatedArrival ? new Date(trip.estimatedArrival).toLocaleTimeString() : '--';
+        document.getElementById('trackDistance').textContent = trip.estimatedDistance ? `${trip.estimatedDistance} km` : '--';
+        document.getElementById('trackFrom').textContent = trip.sourceOrg?.name || trip.startPoint || '--';
+        document.getElementById('trackTo').textContent = trip.destinationOrg?.name || trip.endPoint || '--';
+
+        // Load items
+        if (trip.loadCard?.items?.length) {
+          document.getElementById('trackLoadItems').innerHTML = trip.loadCard.items.map(item => `
+            <div class="flex justify-between text-sm bg-gray-50 p-2 rounded">
+              <span>${item.itemName} ${item.itemNameHindi ? `(${item.itemNameHindi})` : ''}</span>
+              <span class="font-medium">${item.quantity} ${item.unit}</span>
+            </div>
+          `).join('');
+        }
+
+        // Timeline
+        if (trip.events?.length) {
+          document.getElementById('trackTimeline').innerHTML = trip.events.map((event, i) => `
+            <div class="relative pb-4">
+              <div class="timeline-dot ${i === 0 ? '' : 'completed'}"></div>
+              <p class="font-medium text-sm text-gray-800">${formatEventType(event.eventType)}</p>
+              <p class="text-xs text-gray-500">${event.description || ''}</p>
+              <p class="text-xs text-gray-400">${new Date(event.atTime).toLocaleString()}</p>
+            </div>
+          `).join('');
+        }
+
+        // Init map
+        initMap(trip);
+
+        // Subscribe to location updates
+        if (socket && ['IN_TRANSIT', 'LOADED'].includes(trip.status)) {
+          socket.emit('tracking:subscribe', { tripId });
+        }
+
+      } catch (e) {
+        console.error('Failed to load trip:', e);
+      }
+    }
+
+    function initMap(trip) {
+      if (!map) {
+        map = L.map('map').setView([19.5, 73.5], 9);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap'
+        }).addTo(map);
+      }
+
+      // Set marker from latest location
+      if (trip.latestLoc) {
+        const pos = [trip.latestLoc.lat, trip.latestLoc.lng];
+        if (marker) {
+          marker.setLatLng(pos);
+        } else {
+          marker = L.marker(pos).addTo(map);
+        }
+        map.setView(pos, 11);
+        marker.bindPopup(`<b>${trip.truck?.number}</b><br>${trip.driver?.user?.name || 'Driver'}`).openPopup();
+      }
+    }
+
+    function updateMapLocation(data) {
+      if (!map) return;
+      const pos = [data.latitude, data.longitude];
+      if (marker) {
+        marker.setLatLng(pos);
+      } else {
+        marker = L.marker(pos).addTo(map);
+      }
+      map.panTo(pos);
+    }
+
+    // WebSocket
+    function connectWebSocket() {
+      if (socket) socket.disconnect();
+
+      socket = io(API_BASE, {
+        auth: { token: accessToken },
+        transports: ['websocket']
+      });
+
+      socket.on('connect', () => console.log('WebSocket connected'));
+      socket.on('disconnect', () => console.log('WebSocket disconnected'));
+
+      socket.on('tracking:location-update', (data) => {
+        console.log('Location update:', data);
+        if (data.tripId === currentTripId) {
+          updateMapLocation(data);
+        }
+      });
+    }
+
+    // Mock Location
+    async function startMockLocation() {
+      if (!currentTripId) return;
+      try {
+        await fetch(`${API_BASE}/api/dev/mock-location/start/${currentTripId}?interval=2000`, { method: 'POST' });
+        console.log('Mock location started');
+      } catch (e) {}
+    }
+
+    async function stopMockLocation() {
+      if (!currentTripId) return;
+      try {
+        await fetch(`${API_BASE}/api/dev/mock-location/stop/${currentTripId}`, { method: 'POST' });
+        console.log('Mock location stopped');
+      } catch (e) {}
+    }
+
+    // Navigation
+    function showScreen(screenId) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(screenId).classList.add('active');
+
+      // Update nav
+      document.querySelectorAll('.nav-item').forEach(n => {
+        n.classList.remove('active');
+        if (n.dataset.screen === screenId) n.classList.add('active');
+      });
+
+      // Special handling for tracking screen
+      if (screenId === 'trackingScreen') {
+        setTimeout(() => map?.invalidateSize(), 100);
+      }
+    }
+
+    // Helpers
+    function getStatusClass(status) {
+      const classes = {
+        'IN_TRANSIT': 'bg-green-100 text-green-800',
+        'LOADED': 'bg-yellow-100 text-yellow-800',
+        'DELIVERED': 'bg-blue-100 text-blue-800',
+        'CREATED': 'bg-gray-100 text-gray-800',
+        'COMPLETED': 'bg-purple-100 text-purple-800',
+        'IDLE': 'bg-gray-100 text-gray-600'
+      };
+      return classes[status] || 'bg-gray-100 text-gray-800';
+    }
+
+    function formatStatus(status) {
+      const labels = {
+        'IN_TRANSIT': 'In Transit',
+        'LOADED': 'Loaded',
+        'DELIVERED': 'Delivered',
+        'CREATED': 'Created',
+        'COMPLETED': 'Completed',
+        'IDLE': 'Idle'
+      };
+      return labels[status] || status;
+    }
+
+    function formatEventType(type) {
+      const labels = {
+        'TRIP_CREATED': 'Trip Created',
+        'ASSIGNED': 'Driver Assigned',
+        'LOAD_COMPLETED': 'Loading Completed',
+        'IN_TRANSIT': 'Trip Started',
+        'ARRIVED': 'Arrived',
+        'DELIVERED': 'Delivered',
+        'COMPLETED': 'Completed'
+      };
+      return labels[type] || type;
+    }
+  </script>
+</body>
+</html>
