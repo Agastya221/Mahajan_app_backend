@@ -30,7 +30,7 @@ export function createApp(): Application {
   // Security middleware
   app.use(helmet());
   app.use(cors({
-    origin: config.cors.origin,
+    origin: "*", // Adjust as needed for production
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
