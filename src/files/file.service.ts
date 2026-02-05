@@ -1,12 +1,22 @@
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuid } from 'uuid';
+import sharp from 'sharp';
 import prisma from '../config/database';
-import { s3Client } from '../config/s3';
+import { s3Client, getPublicUrl } from '../config/s3';
 import { config } from '../config/env';
 import { NotFoundError, ValidationError } from '../utils/errors';
-import { PresignedUrlRequestDto } from './file.dto';
+import { PresignedUrlRequestDto, CompressedUploadDto } from './file.dto';
 import { AttachmentType } from '@prisma/client';
+import { logger } from '../utils/logger';
+
+// Image compression settings
+const IMAGE_COMPRESSION_CONFIG = {
+  maxWidth: 1920,
+  maxHeight: 1920,
+  quality: 80,
+  targetSizeKB: 300, // Target ~300KB output
+};
 
 export class FileService {
   async generatePresignedUrl(data: PresignedUrlRequestDto, uploadedByUserId: string) {
@@ -89,19 +99,68 @@ export class FileService {
       throw new ValidationError('S3 key mismatch');
     }
 
-    // Update status to COMPLETED
-    await prisma.attachment.update({
-      where: { id: fileId },
-      data: { status: 'COMPLETED' },
-    });
+    // SECURITY: Verify file actually exists in S3 before marking as COMPLETED
+    try {
+      const headCommand = new HeadObjectCommand({
+        Bucket: config.aws.s3Bucket,
+        Key: s3Key,
+      });
 
-    return {
-      id: file.id,
-      url: file.url,
-      filename: file.fileName,
-      mimeType: file.mimeType,
-      sizeBytes: file.sizeBytes,
-    };
+      const s3Response = await s3Client.send(headCommand);
+
+      // Optionally verify file size matches (allow 10% tolerance for encoding differences)
+      if (file.sizeBytes && s3Response.ContentLength) {
+        const expectedSize = file.sizeBytes;
+        const actualSize = s3Response.ContentLength;
+        const sizeDiff = Math.abs(expectedSize - actualSize);
+        const tolerance = expectedSize * 0.1; // 10% tolerance
+
+        if (sizeDiff > tolerance && sizeDiff > 1024) {
+          // Only warn if diff > 10% AND > 1KB
+          logger.warn('File size mismatch on upload confirmation', {
+            fileId,
+            expectedSize,
+            actualSize,
+            diff: sizeDiff,
+          });
+        }
+      }
+
+      // Update with actual size from S3
+      const actualSizeBytes = s3Response.ContentLength || file.sizeBytes;
+
+      await prisma.attachment.update({
+        where: { id: fileId },
+        data: {
+          status: 'COMPLETED',
+          sizeBytes: actualSizeBytes,
+        },
+      });
+
+      logger.info('File upload confirmed', { fileId, s3Key, sizeBytes: actualSizeBytes });
+
+      return {
+        id: file.id,
+        url: file.url,
+        filename: file.fileName,
+        mimeType: file.mimeType,
+        sizeBytes: actualSizeBytes,
+      };
+    } catch (error: any) {
+      // Handle S3 NotFound error specifically
+      if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+        logger.warn('Upload confirmation failed - file not found in S3', { fileId, s3Key });
+        throw new ValidationError('File not found in S3. Please upload the file and try again.');
+      }
+
+      // Re-throw other errors
+      logger.error('S3 HeadObject failed during upload confirmation', {
+        fileId,
+        s3Key,
+        error: error.message,
+      });
+      throw new ValidationError('Failed to verify file upload. Please try again.');
+    }
   }
 
   async generateDownloadUrl(fileId: string, userId: string) {
@@ -152,7 +211,19 @@ export class FileService {
       }
     }
 
-    // Generate presigned GET URL (valid for 1 hour)
+    // Try to use public CDN URL first (R2 public bucket or custom domain)
+    // This avoids egress fees and provides faster delivery
+    const publicUrl = file.s3Key ? getPublicUrl(file.s3Key) : null;
+    if (publicUrl) {
+      return {
+        downloadUrl: publicUrl,
+        filename: file.fileName,
+        expiresIn: null, // Public URL doesn't expire
+        isPublic: true,
+      };
+    }
+
+    // Fall back to presigned URL if no public URL configured
     const command = new GetObjectCommand({
       Bucket: config.aws.s3Bucket,
       Key: file.s3Key || undefined,
@@ -164,6 +235,7 @@ export class FileService {
       downloadUrl,
       filename: file.fileName,
       expiresIn: 3600, // seconds
+      isPublic: false,
     };
   }
 
@@ -223,5 +295,162 @@ export class FileService {
     };
 
     return mapping[purpose] || AttachmentType.OTHER;
+  }
+
+  /**
+   * Compress an image buffer using Sharp
+   * - Resize to max 1920x1920 (maintains aspect ratio, won't enlarge)
+   * - Output as JPEG with quality 80
+   * - Target ~300KB output size
+   */
+  async compressImage(buffer: Buffer, mimeType: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    // Only compress images
+    if (!mimeType.startsWith('image/')) {
+      return { buffer, mimeType };
+    }
+
+    try {
+      const image = sharp(buffer);
+      const metadata = await image.metadata();
+
+      logger.debug('Image compression started', {
+        originalSize: buffer.length,
+        width: metadata.width,
+        height: metadata.height,
+        format: metadata.format,
+      });
+
+      // Calculate if resize is needed
+      const { maxWidth, maxHeight, quality } = IMAGE_COMPRESSION_CONFIG;
+      const needsResize =
+        (metadata.width && metadata.width > maxWidth) ||
+        (metadata.height && metadata.height > maxHeight);
+
+      let pipeline = image;
+
+      // Resize if needed (maintains aspect ratio, won't enlarge)
+      if (needsResize) {
+        pipeline = pipeline.resize(maxWidth, maxHeight, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        });
+      }
+
+      // Convert to JPEG with compression
+      const compressedBuffer = await pipeline
+        .jpeg({
+          quality,
+          progressive: true,
+          mozjpeg: true, // Use mozjpeg for better compression
+        })
+        .toBuffer();
+
+      const compressionRatio = ((buffer.length - compressedBuffer.length) / buffer.length) * 100;
+
+      logger.info('Image compressed successfully', {
+        originalSize: buffer.length,
+        compressedSize: compressedBuffer.length,
+        compressionRatio: `${compressionRatio.toFixed(1)}%`,
+        wasResized: needsResize,
+      });
+
+      return {
+        buffer: compressedBuffer,
+        mimeType: 'image/jpeg',
+      };
+    } catch (error) {
+      logger.error('Image compression failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        mimeType,
+      });
+      // Return original if compression fails
+      return { buffer, mimeType };
+    }
+  }
+
+  /**
+   * Upload a file with server-side compression
+   * Accepts multipart form data, compresses images, uploads to S3
+   */
+  async uploadCompressed(
+    data: CompressedUploadDto,
+    fileBuffer: Buffer,
+    uploadedByUserId: string
+  ): Promise<{
+    fileId: string;
+    url: string;
+    filename: string;
+    mimeType: string;
+    originalSize: number;
+    compressedSize: number;
+    compressionRatio: string;
+  }> {
+    // Validate file size (max 10MB for original)
+    if (fileBuffer.length > 10 * 1024 * 1024) {
+      throw new ValidationError('File size exceeds 10MB limit');
+    }
+
+    const originalSize = fileBuffer.length;
+    let finalBuffer = fileBuffer;
+    let finalMimeType = data.mimeType;
+
+    // Compress if it's an image and compression is not skipped
+    if (data.mimeType.startsWith('image/') && !data.skipCompression) {
+      const compressed = await this.compressImage(fileBuffer, data.mimeType);
+      finalBuffer = compressed.buffer;
+      finalMimeType = compressed.mimeType;
+    }
+
+    // Generate unique S3 key with jpg extension for compressed images
+    const fileExt = finalMimeType === 'image/jpeg' ? 'jpg' : data.filename.split('.').pop() || 'unknown';
+    const s3Key = `uploads/${uuid()}.${fileExt}`;
+
+    // Generate S3 URL
+    const url = config.aws.s3Endpoint
+      ? `${config.aws.s3Endpoint}/${config.aws.s3Bucket}/${s3Key}`
+      : `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${s3Key}`;
+
+    // Upload to S3
+    const putCommand = new PutObjectCommand({
+      Bucket: config.aws.s3Bucket,
+      Key: s3Key,
+      Body: finalBuffer,
+      ContentType: finalMimeType,
+    });
+
+    await s3Client.send(putCommand);
+
+    // Create file record with COMPLETED status (since we uploaded directly)
+    const file = await prisma.attachment.create({
+      data: {
+        fileName: data.filename,
+        s3Key,
+        url,
+        mimeType: finalMimeType,
+        sizeBytes: finalBuffer.length,
+        uploadedBy: uploadedByUserId,
+        type: this.mapPurposeToType(data.purpose),
+        status: 'COMPLETED',
+      },
+    });
+
+    const compressionRatio = ((originalSize - finalBuffer.length) / originalSize) * 100;
+
+    logger.info('Compressed file uploaded', {
+      fileId: file.id,
+      originalSize,
+      compressedSize: finalBuffer.length,
+      compressionRatio: `${compressionRatio.toFixed(1)}%`,
+    });
+
+    return {
+      fileId: file.id,
+      url,
+      filename: data.filename,
+      mimeType: finalMimeType,
+      originalSize,
+      compressedSize: finalBuffer.length,
+      compressionRatio: `${compressionRatio.toFixed(1)}%`,
+    };
   }
 }

@@ -1,8 +1,9 @@
 import { Response } from 'express';
 import { FileService } from './file.service';
-import { presignedUrlRequestSchema, confirmUploadSchema } from './file.dto';
+import { presignedUrlRequestSchema, confirmUploadSchema, compressedUploadSchema } from './file.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { ValidationError } from '../utils/errors';
 
 const fileService = new FileService();
 
@@ -20,6 +21,39 @@ export class FileController {
   confirmUpload = asyncHandler(async (req: AuthRequest, res: Response) => {
     const data = confirmUploadSchema.parse(req.body);
     const result = await fileService.confirmUpload(data.fileId, data.s3Key, req.user!.id);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  });
+
+  /**
+   * Upload with server-side compression
+   * Accepts multipart form data with file + metadata
+   * Compresses images before uploading to S3
+   */
+  uploadCompressed = asyncHandler(async (req: AuthRequest, res: Response) => {
+    // multer adds file to req.file
+    const file = req.file;
+
+    if (!file) {
+      throw new ValidationError('No file provided');
+    }
+
+    // Parse metadata from form fields
+    const metadata = compressedUploadSchema.parse({
+      filename: req.body.filename || file.originalname,
+      mimeType: req.body.mimeType || file.mimetype,
+      purpose: req.body.purpose,
+      skipCompression: req.body.skipCompression === 'true',
+    });
+
+    const result = await fileService.uploadCompressed(
+      metadata,
+      file.buffer,
+      req.user!.id
+    );
 
     res.status(200).json({
       success: true,

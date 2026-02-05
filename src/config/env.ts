@@ -31,11 +31,12 @@ export const config = {
   },
 
   aws: {
-    region: process.env.AWS_REGION || 'us-east-1',
+    region: process.env.AWS_REGION || 'auto', // 'auto' for R2
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
     s3Bucket: process.env.AWS_S3_BUCKET!,
-    s3Endpoint: process.env.AWS_S3_ENDPOINT,
+    s3Endpoint: process.env.AWS_S3_ENDPOINT, // R2: https://<account_id>.r2.cloudflarestorage.com
+    publicUrl: process.env.S3_PUBLIC_URL, // R2 public bucket URL or custom domain for CDN
   },
 
   cors: {

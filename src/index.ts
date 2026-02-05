@@ -17,6 +17,9 @@ import { SocketGateway } from './websocket/socket.gateway';
 // Import notification worker
 import './notifications/notification.worker';
 
+// Import file cleanup worker
+import { scheduleFileCleanup } from './files/file.cleanup';
+
 // Retry Redis connection
 const connectRedisWithRetry = async (retries = 3, delay = 1000): Promise<boolean> => {
   logger.info('🔌 Connecting to Redis...');
@@ -93,6 +96,11 @@ async function startServer() {
 
     // Store socketGateway instance for use in services if needed
     (global as any).socketGateway = socketGateway;
+
+    // Schedule file cleanup job (runs hourly to clean stale uploads)
+    if (redisConnected) {
+      await scheduleFileCleanup();
+    }
 
     // Start server
     server.listen(config.port, () => {

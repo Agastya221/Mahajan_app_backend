@@ -5,12 +5,29 @@ export const presignedUrlRequestSchema = z.object({
   mimeType: z.string().min(1, 'MIME type is required'),
   fileSize: z.number().positive('File size must be positive').max(10 * 1024 * 1024, 'File size cannot exceed 10MB'),
   purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
+  // Compression hint for mobile apps
+  skipCompression: z.boolean().optional().default(false),
+  originalDimensions: z
+    .object({
+      width: z.number().positive(),
+      height: z.number().positive(),
+    })
+    .optional(),
 });
 
 export const confirmUploadSchema = z.object({
-  fileId: z.cuid('Invalid file ID'),
+  fileId: z.string().cuid('Invalid file ID'),
   s3Key: z.string().min(1, 'S3 key is required'),
+});
+
+// Schema for server-side compressed upload (multipart form data)
+export const compressedUploadSchema = z.object({
+  filename: z.string().min(1, 'Filename is required'),
+  mimeType: z.string().min(1, 'MIME type is required'),
+  purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
+  skipCompression: z.boolean().optional().default(false),
 });
 
 export type PresignedUrlRequestDto = z.infer<typeof presignedUrlRequestSchema>;
 export type ConfirmUploadDto = z.infer<typeof confirmUploadSchema>;
+export type CompressedUploadDto = z.infer<typeof compressedUploadSchema>;
