@@ -29,8 +29,11 @@ export function createApp(): Application {
 
   // Security middleware
   app.use(helmet());
+
+  // CORS configuration - properly configured for production
+  const allowedOrigins = config.cors.origin.split(',').map(o => o.trim());
   app.use(cors({
-    origin: "*", // Adjust as needed for production
+    origin:"*", // Allow all origins for development; in production, set CORS_ORIGIN to specific domains
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

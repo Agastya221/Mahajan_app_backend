@@ -197,7 +197,8 @@ export class LedgerService {
       throw new ConflictError('Invoice number already exists for this account');
     }
 
-    // Create invoice + ledger entry in transaction
+    // Create invoice + ledger entry in transaction with Serializable isolation
+    // This prevents phantom reads and ensures financial data integrity
     const result = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.create({
         data: {
@@ -378,6 +379,7 @@ export class LedgerService {
     }
 
     // Create payment + ledger entry + chat message in transaction
+    // Row-level locking (FOR UPDATE) used below ensures financial integrity
     const result = await prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
@@ -413,10 +415,8 @@ export class LedgerService {
       }
 
       if (lockedAccount.balance < BigInt(data.amount)) {
-        throw new ValidationError(
-          `Insufficient balance. Current balance: ₹${(Number(lockedAccount.balance) / 100).toFixed(2)}, ` +
-          `Payment amount: ₹${(Number(data.amount) / 100).toFixed(2)}`
-        );
+        // Don't expose actual balance in error message for security
+        throw new ValidationError('Insufficient balance to process this payment');
       }
 
       // Atomic decrement after lock

@@ -1,9 +1,10 @@
 import { Server, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
-import { redisSubscriber } from '../config/redis';
+import { redisSubscriber, redisClient } from '../config/redis';
 import { config } from '../config/env';
 import prisma from '../config/database';
+import { logger } from '../utils/logger';
 
 interface SocketData {
   user: {
@@ -17,9 +18,29 @@ export class SocketGateway {
   private io: Server;
 
   constructor(httpServer: HttpServer) {
+    // Parse allowed origins from config (supports comma-separated list)
+    const allowedOrigins = config.cors.origin.split(',').map(o => o.trim());
+
     this.io = new Server(httpServer, {
       cors: {
-        origin: config.cors.origin,
+        origin: (origin, callback) => {
+          // Allow requests with no origin (mobile apps, etc.)
+          if (!origin) {
+            return callback(null, true);
+          }
+
+          // Check if origin is in allowed list
+          if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            return callback(null, true);
+          }
+
+          // In development, allow localhost variations
+          if (config.nodeEnv === 'development' && origin.includes('localhost')) {
+            return callback(null, true);
+          }
+
+          callback(new Error('Not allowed by CORS'));
+        },
         credentials: true,
       },
       path: '/socket.io/',
@@ -39,8 +60,40 @@ export class SocketGateway {
           return next(new Error('Authentication error: No token provided'));
         }
 
+        // Check if token is blacklisted (user logged out)
+        try {
+          const isBlacklisted = await redisClient.get(`bl:${token}`);
+          if (isBlacklisted) {
+            logger.warn('WebSocket connection attempt with blacklisted token');
+            return next(new Error('Token has been revoked'));
+          }
+        } catch (redisError) {
+          // If Redis is down, log but allow connection (fail-open for WebSocket)
+          // This is acceptable as WebSocket is for real-time updates, not auth-critical operations
+          logger.warn('Redis unavailable for WebSocket token blacklist check', { error: redisError });
+        }
+
         const decoded = jwt.verify(token, config.jwt.accessSecret) as any;
-        (socket.data as SocketData).user = decoded;
+
+        // Verify user still exists and is active
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.userId },
+          select: { id: true, phone: true, role: true, status: true },
+        });
+
+        if (!user) {
+          return next(new Error('User not found'));
+        }
+
+        if (user.status !== 'ACTIVE') {
+          return next(new Error('Account has been suspended or banned'));
+        }
+
+        (socket.data as SocketData).user = {
+          id: user.id,
+          phone: user.phone,
+          role: user.role,
+        };
         next();
       } catch (err) {
         next(new Error('Invalid token'));

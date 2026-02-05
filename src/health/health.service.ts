@@ -1,16 +1,23 @@
 import prisma from '../config/database';
 import { redisClient } from '../config/redis';
 import { TripStatus } from '@prisma/client';
+import { s3Client } from '../config/s3';
+import { HeadBucketCommand } from '@aws-sdk/client-s3';
+import { config } from '../config/env';
 
 export class HealthService {
   async checkHealth() {
     const checks = {
       database: await this.checkDatabase(),
       redis: await this.checkRedis(),
+      s3: await this.checkS3(),
       system: await this.getSystemMetrics(),
     };
 
-    const isHealthy = checks.database.status === 'healthy' && checks.redis.status === 'healthy';
+    const isHealthy =
+      checks.database.status === 'healthy' &&
+      checks.redis.status === 'healthy' &&
+      checks.s3.status === 'healthy';
 
     return {
       status: isHealthy ? 'healthy' : 'unhealthy',
@@ -62,6 +69,43 @@ export class HealthService {
       return {
         status: 'unhealthy',
         error: error.message || 'Redis unreachable',
+      };
+    }
+  }
+
+  private async checkS3() {
+    try {
+      const start = Date.now();
+
+      // Check if bucket exists and is accessible
+      await s3Client.send(
+        new HeadBucketCommand({
+          Bucket: config.aws.s3Bucket,
+        })
+      );
+
+      const latency = Date.now() - start;
+
+      return {
+        status: 'healthy',
+        bucket: config.aws.s3Bucket,
+        latency: `${latency}ms`,
+      };
+    } catch (error: any) {
+      // Handle specific S3 errors
+      let errorMessage = 'S3 unreachable';
+      if (error.name === 'NotFound') {
+        errorMessage = `Bucket "${config.aws.s3Bucket}" not found`;
+      } else if (error.name === 'Forbidden' || error.$metadata?.httpStatusCode === 403) {
+        errorMessage = 'Access denied - check AWS credentials';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      return {
+        status: 'unhealthy',
+        bucket: config.aws.s3Bucket,
+        error: errorMessage,
       };
     }
   }

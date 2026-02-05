@@ -271,6 +271,11 @@ export class TrackingService {
   }
 
   async getLocationHistory(tripId: string, userId: string, limit = 100, offset = 0) {
+    // Enforce maximum pagination limit to prevent memory issues
+    const MAX_LIMIT = 500;
+    const safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+    const safeOffset = Math.max(offset, 0);
+
     // Verify user has access to this trip
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
@@ -295,8 +300,8 @@ export class TrackingService {
     const locations = await prisma.tripLocation.findMany({
       where: { tripId },
       orderBy: { capturedAt: 'desc' },
-      take: limit,
-      skip: offset,
+      take: safeLimit,
+      skip: safeOffset,
     });
 
     const total = await prisma.tripLocation.count({
@@ -307,9 +312,9 @@ export class TrackingService {
       locations,
       pagination: {
         total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
+        limit: safeLimit,
+        offset: safeOffset,
+        hasMore: safeOffset + safeLimit < total,
       },
     };
   }

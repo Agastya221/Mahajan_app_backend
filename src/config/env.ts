@@ -17,7 +17,9 @@ export const config = {
   },
 
   jwt: {
-    accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET!,
+    // JWT_ACCESS_SECRET takes precedence, falls back to JWT_SECRET
+    // Both are validated below to ensure at least one is set
+    accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || '',
     accessExpiration: process.env.JWT_ACCESS_EXPIRATION || '15m',
     refreshTokenExpiryDays: parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS || '30'),
   },
@@ -48,7 +50,6 @@ export const config = {
 // Validate required environment variables
 const requiredEnvVars = [
   'DATABASE_URL',
-  'JWT_SECRET',
   'MSG91_AUTH_KEY',
   'MSG91_WIDGET_ID',
   'MSG91_TOKEN_AUTH',
@@ -60,5 +61,23 @@ const requiredEnvVars = [
 for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {
     throw new Error(`Missing required environment variable: ${envVar}`);
+  }
+}
+
+// Validate JWT secret - at least one must be set
+if (!process.env.JWT_SECRET && !process.env.JWT_ACCESS_SECRET) {
+  throw new Error('Missing required environment variable: JWT_SECRET or JWT_ACCESS_SECRET must be set');
+}
+
+// Validate JWT secret strength in production
+if (config.nodeEnv === 'production') {
+  const jwtSecret = config.jwt.accessSecret;
+  if (jwtSecret.length < 32) {
+    throw new Error('JWT secret must be at least 32 characters in production');
+  }
+
+  // Validate CORS is not wildcard in production
+  if (config.cors.origin === '*') {
+    throw new Error('CORS origin cannot be "*" in production. Set CORS_ORIGIN to your frontend domain(s).');
   }
 }

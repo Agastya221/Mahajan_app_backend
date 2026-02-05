@@ -17,6 +17,26 @@ import { SocketGateway } from './websocket/socket.gateway';
 // Import notification worker
 import './notifications/notification.worker';
 
+// Retry Redis connection
+const connectRedisWithRetry = async (retries = 3, delay = 1000): Promise<boolean> => {
+  logger.info('🔌 Connecting to Redis...');
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      await redisClient.ping();
+      logger.info('✅ Redis connected successfully');
+      return true;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn(`⚠ Redis connection failed (attempt ${i + 1}/${retries}): ${errorMsg}`);
+      if (i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay));
+      }
+    }
+  }
+  return false;
+};
+
 // Retry database connection
 const connectWithRetry = async (retries = 5, delay = 2000) => {
   const dbUrl = process.env.DATABASE_URL || '';
@@ -48,13 +68,17 @@ async function startServer() {
       process.exit(1);
     }
 
-    // Check Redis
-    try {
-      await redisClient.ping();
-      logger.info('✅ Redis connected');
-    } catch (error) {
-      logger.warn('⚠ Redis connection failed. Checking if Docker is up...');
-      // Don't exit, but functionality will be limited
+    // Check Redis - REQUIRED for production (token blacklisting, caching)
+    const redisConnected = await connectRedisWithRetry();
+    if (!redisConnected) {
+      if (config.nodeEnv === 'production') {
+        logger.error('❌ CRITICAL: Redis is required in production for token blacklisting and caching.');
+        logger.error('👉 ACTION REQUIRED: Please ensure Redis is running.');
+        process.exit(1);
+      } else {
+        logger.warn('⚠️ WARNING: Redis is not connected. Token blacklisting will not work.');
+        logger.warn('⚠️ This is acceptable for development, but MUST be fixed for production.');
+      }
     }
 
     // Create Express app

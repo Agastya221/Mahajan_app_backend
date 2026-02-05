@@ -27,7 +27,8 @@
       "Bash(__NEW_LINE_b0a5ba414a24d0ca__ echo \"\")",
       "Bash(__NEW_LINE_fa1089f2d5c59a7a__ echo \"\")",
       "Bash(__NEW_LINE_2302a36d973a4828__ echo \"\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(find:*)"
     ]
   }
 }
