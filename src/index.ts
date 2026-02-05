@@ -20,6 +20,9 @@ import './notifications/notification.worker';
 // Import file cleanup worker
 import { scheduleFileCleanup } from './files/file.cleanup';
 
+// Import storage config logger
+import { logStorageConfig } from './config/storage';
+
 // Retry Redis connection
 const connectRedisWithRetry = async (retries = 3, delay = 1000): Promise<boolean> => {
   logger.info('🔌 Connecting to Redis...');
@@ -93,6 +96,9 @@ async function startServer() {
     // Initialize WebSocket (Socket.IO)
     const socketGateway = new SocketGateway(server);
     logger.info('✅ WebSocket gateway initialized');
+
+    // Log storage configuration
+    logStorageConfig();
 
     // Store socketGateway instance for use in services if needed
     (global as any).socketGateway = socketGateway;

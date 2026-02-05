@@ -39,6 +39,12 @@ export const config = {
     publicUrl: process.env.S3_PUBLIC_URL, // R2 public bucket URL or custom domain for CDN
   },
 
+  cloudfront: {
+    domain: process.env.CLOUDFRONT_DOMAIN || '', // e.g., d1234abcd.cloudfront.net
+    keyPairId: process.env.CLOUDFRONT_KEY_PAIR_ID || '', // e.g., K2JCJMDEHXQW5F
+    privateKey: process.env.CLOUDFRONT_PRIVATE_KEY || '', // Base64 encoded PEM private key
+  },
+
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
   },

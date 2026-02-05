@@ -3,7 +3,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import prisma from '../config/database';
-import { s3Client, getPublicUrl } from '../config/s3';
+import { s3Client } from '../config/s3';
+import { getCdnUrl } from '../config/cdn';
 import { config } from '../config/env';
 import { NotFoundError, ValidationError } from '../utils/errors';
 import { PresignedUrlRequestDto, CompressedUploadDto } from './file.dto';
@@ -211,19 +212,23 @@ export class FileService {
       }
     }
 
-    // Try to use public CDN URL first (R2 public bucket or custom domain)
-    // This avoids egress fees and provides faster delivery
-    const publicUrl = file.s3Key ? getPublicUrl(file.s3Key) : null;
-    if (publicUrl) {
-      return {
-        downloadUrl: publicUrl,
-        filename: file.fileName,
-        expiresIn: null, // Public URL doesn't expire
-        isPublic: true,
-      };
+    // Try CDN URL first (CloudFront > Public URL)
+    // This provides better performance and lower egress costs
+    if (file.s3Key) {
+      const cdnResult = getCdnUrl(file.s3Key, 3600);
+
+      if (cdnResult) {
+        return {
+          downloadUrl: cdnResult.url,
+          filename: file.fileName,
+          expiresIn: cdnResult.expiresIn,
+          isPublic: cdnResult.type === 'public',
+          cdnType: cdnResult.type,
+        };
+      }
     }
 
-    // Fall back to presigned URL if no public URL configured
+    // Fall back to S3 presigned URL if no CDN configured
     const command = new GetObjectCommand({
       Bucket: config.aws.s3Bucket,
       Key: file.s3Key || undefined,
@@ -236,6 +241,7 @@ export class FileService {
       filename: file.fileName,
       expiresIn: 3600, // seconds
       isPublic: false,
+      cdnType: 's3' as const,
     };
   }
 
