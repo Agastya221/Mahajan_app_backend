@@ -20,8 +20,8 @@ import './notifications/notification.worker';
 // Import file cleanup worker
 import { scheduleFileCleanup } from './files/file.cleanup';
 
-// Import storage config logger
-import { logStorageConfig } from './config/storage';
+// TODO: Enable storage config logger when adding CDN/R2 support
+// import { logStorageConfig } from './config/storage';
 
 // Retry Redis connection
 const connectRedisWithRetry = async (retries = 3, delay = 1000): Promise<boolean> => {
@@ -97,8 +97,8 @@ async function startServer() {
     const socketGateway = new SocketGateway(server);
     logger.info('✅ WebSocket gateway initialized');
 
-    // Log storage configuration
-    logStorageConfig();
+    // TODO: Enable when adding CDN/R2 support
+    // logStorageConfig();
 
     // Store socketGateway instance for use in services if needed
     (global as any).socketGateway = socketGateway;

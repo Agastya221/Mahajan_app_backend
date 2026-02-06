@@ -1,6 +1,15 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
-import { CreateAccountDto, CreateInvoiceDto, UpdateInvoiceDto, CreatePaymentDto } from './ledger.dto';
+import {
+  CreateAccountDto,
+  CreateInvoiceDto,
+  UpdateInvoiceDto,
+  CreatePaymentDto,
+  CreatePaymentRequestDto,
+  MarkPaymentPaidDto,
+  ConfirmPaymentDto,
+  DisputePaymentDto,
+} from './ledger.dto';
 import { LedgerDirection } from '@prisma/client';
 
 export class LedgerService {
@@ -565,5 +574,406 @@ export class LedgerService {
         hasMore: offset + safeLimit < total,
       },
     };
+  }
+
+  // ============================================
+  // TWO-PARTY PAYMENT CONFIRMATION FLOW
+  // ============================================
+
+  /**
+   * Step 1: Create payment request
+   * - Receiver (who is owed money) creates a payment request
+   * - Status: PENDING
+   * - Ledger: NOT updated yet
+   */
+  async createPaymentRequest(data: CreatePaymentRequestDto, createdBy: string) {
+    const account = await prisma.account.findUnique({
+      where: { id: data.accountId },
+      include: {
+        ownerOrg: { select: { id: true, name: true } },
+        counterpartyOrg: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!account) {
+      throw new NotFoundError('Account not found');
+    }
+
+    // Verify user is from the owner org (the one who is owed money / creditor)
+    const membership = await prisma.orgMember.findFirst({
+      where: {
+        userId: createdBy,
+        orgId: account.ownerOrgId,
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenError('Only the creditor organization can request payments');
+    }
+
+    const payment = await prisma.payment.create({
+      data: {
+        accountId: data.accountId,
+        amount: data.amount,
+        tag: data.tag,
+        remarks: data.remarks,
+        invoiceId: data.invoiceId,
+        status: 'PENDING',
+      },
+      include: {
+        account: {
+          include: {
+            ownerOrg: { select: { id: true, name: true } },
+            counterpartyOrg: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // TODO: Send notification to counterparty org about payment request
+
+    return payment;
+  }
+
+  /**
+   * Step 2: Sender marks payment as paid
+   * - Sender uploads proof (optional but recommended)
+   * - Status: MARKED_AS_PAID
+   * - Ledger: NOT updated yet
+   */
+  async markPaymentAsPaid(data: MarkPaymentPaidDto, userId: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: data.paymentId },
+      include: {
+        account: true,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundError('Payment not found');
+    }
+
+    if (!payment.account) {
+      throw new ValidationError('Payment has no associated account');
+    }
+
+    if (payment.status !== 'PENDING') {
+      throw new ValidationError(`Cannot mark payment as paid. Current status: ${payment.status}`);
+    }
+
+    // Verify user is from counterparty org (the one who owes money / debtor)
+    const membership = await prisma.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: payment.account.counterpartyOrgId,
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenError('Only the debtor organization can mark payments as paid');
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Update payment status
+      const updatedPayment = await tx.payment.update({
+        where: { id: data.paymentId },
+        data: {
+          status: 'MARKED_AS_PAID',
+          mode: data.mode,
+          utrNumber: data.utrNumber,
+          proofNote: data.proofNote,
+          markedPaidAt: new Date(),
+          markedPaidBy: userId,
+        },
+        include: {
+          account: {
+            include: {
+              ownerOrg: { select: { id: true, name: true } },
+              counterpartyOrg: { select: { id: true, name: true } },
+            },
+          },
+          attachments: true,
+        },
+      });
+
+      // Link proof attachments
+      if (data.attachmentIds && data.attachmentIds.length > 0) {
+        await tx.attachment.updateMany({
+          where: {
+            id: { in: data.attachmentIds },
+            uploadedBy: userId,
+          },
+          data: {
+            paymentId: updatedPayment.id,
+          },
+        });
+      }
+
+      return updatedPayment;
+    });
+
+    // TODO: Send notification to owner org about payment marked as paid
+
+    return result;
+  }
+
+  /**
+   * Step 3a: Receiver confirms payment
+   * - Status: CONFIRMED
+   * - Ledger: NOW updated (balance adjusted)
+   */
+  async confirmPayment(data: ConfirmPaymentDto, userId: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: data.paymentId },
+      include: {
+        account: {
+          include: {
+            ownerOrg: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundError('Payment not found');
+    }
+
+    if (!payment.account) {
+      throw new ValidationError('Payment has no associated account');
+    }
+
+    if (payment.status !== 'MARKED_AS_PAID') {
+      throw new ValidationError(`Cannot confirm payment. Current status: ${payment.status}`);
+    }
+
+    // Verify user is from owner org (the one who is owed money / creditor)
+    const membership = await prisma.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: payment.account.ownerOrgId,
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenError('Only the creditor organization can confirm payments');
+    }
+
+    // NOW update ledger (same logic as before, but only on confirmation)
+    const result = await prisma.$transaction(async (tx) => {
+      // Update payment status
+      const updatedPayment = await tx.payment.update({
+        where: { id: data.paymentId },
+        data: {
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+          confirmedBy: userId,
+          paidAt: new Date(), // Set actual payment date
+        },
+      });
+
+      // Row lock + balance update for owner account
+      const [lockedAccount] = await tx.$queryRaw<Array<{ id: string; balance: bigint }>>`
+        SELECT id, balance FROM "Account" WHERE id = ${payment.accountId} FOR UPDATE
+      `;
+
+      if (!lockedAccount) {
+        throw new Error('Account not found');
+      }
+
+      // Decrement owner's receivable balance (payment received reduces what's owed)
+      const updatedAccount = await tx.account.update({
+        where: { id: payment.accountId! },
+        data: { balance: { decrement: payment.amount } },
+        select: { balance: true },
+      });
+
+      // Create ledger entry for owner
+      await tx.ledgerEntry.create({
+        data: {
+          accountId: payment.accountId!,
+          direction: LedgerDirection.RECEIVABLE,
+          amount: payment.amount,
+          balance: updatedAccount.balance,
+          description: `Payment received - ${payment.tag || 'PAYMENT'} (${payment.mode})`,
+          referenceType: 'PAYMENT',
+          referenceId: payment.id,
+        },
+      });
+
+      // Update mirror account (counterparty)
+      const mirrorAccount = await tx.account.findUnique({
+        where: {
+          ownerOrgId_counterpartyOrgId: {
+            ownerOrgId: payment.account!.counterpartyOrgId,
+            counterpartyOrgId: payment.account!.ownerOrgId,
+          },
+        },
+      });
+
+      if (mirrorAccount) {
+        const updatedMirror = await tx.account.update({
+          where: { id: mirrorAccount.id },
+          data: { balance: { increment: payment.amount } },
+          select: { balance: true },
+        });
+
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: mirrorAccount.id,
+            direction: LedgerDirection.PAYABLE,
+            amount: payment.amount,
+            balance: updatedMirror.balance,
+            description: `Payment sent to ${payment.account!.ownerOrg.name}`,
+            referenceType: 'PAYMENT',
+            referenceId: payment.id,
+          },
+        });
+      }
+
+      // Create chat message notification
+      const thread = await tx.chatThread.findFirst({
+        where: { accountId: payment.accountId },
+      });
+
+      if (thread) {
+        await tx.chatMessage.create({
+          data: {
+            threadId: thread.id,
+            senderUserId: userId,
+            content: `Payment of ₹${(Number(payment.amount) / 100).toLocaleString('en-IN')} confirmed`,
+            messageType: 'PAYMENT_CONFIRMED',
+            paymentId: payment.id,
+          },
+        });
+      }
+
+      return { payment: updatedPayment, newBalance: updatedAccount.balance };
+    });
+
+    return result;
+  }
+
+  /**
+   * Step 3b: Receiver disputes payment
+   * - Status: DISPUTED
+   * - Ledger: NOT updated
+   */
+  async disputePayment(data: DisputePaymentDto, userId: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: data.paymentId },
+      include: {
+        account: true,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundError('Payment not found');
+    }
+
+    if (!payment.account) {
+      throw new ValidationError('Payment has no associated account');
+    }
+
+    if (payment.status !== 'MARKED_AS_PAID') {
+      throw new ValidationError(`Cannot dispute payment. Current status: ${payment.status}`);
+    }
+
+    // Verify user is from owner org (creditor)
+    const membership = await prisma.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: payment.account.ownerOrgId,
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenError('Only the creditor organization can dispute payments');
+    }
+
+    const result = await prisma.payment.update({
+      where: { id: data.paymentId },
+      data: {
+        status: 'DISPUTED',
+        disputedAt: new Date(),
+        disputedBy: userId,
+        disputeReason: data.reason,
+      },
+      include: {
+        account: {
+          include: {
+            ownerOrg: { select: { id: true, name: true } },
+            counterpartyOrg: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // TODO: Send notification about dispute
+
+    return result;
+  }
+
+  /**
+   * Get pending payments for an account (for receiver to confirm)
+   */
+  async getPendingPayments(accountId: string, userId: string) {
+    await this.getAccountById(accountId, userId); // Verify access
+
+    return prisma.payment.findMany({
+      where: {
+        accountId,
+        status: { in: ['PENDING', 'MARKED_AS_PAID'] },
+      },
+      include: {
+        attachments: true,
+        markedPaidUser: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Get payment by ID with full details
+   */
+  async getPaymentById(paymentId: string, userId: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        account: {
+          include: {
+            ownerOrg: { select: { id: true, name: true } },
+            counterpartyOrg: { select: { id: true, name: true } },
+          },
+        },
+        attachments: true,
+        markedPaidUser: { select: { id: true, name: true } },
+        confirmedUser: { select: { id: true, name: true } },
+        disputedUser: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundError('Payment not found');
+    }
+
+    if (!payment.account) {
+      throw new ValidationError('Payment has no associated account');
+    }
+
+    // Verify user has access
+    const hasAccess = await prisma.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: { in: [payment.account.ownerOrgId, payment.account.counterpartyOrgId] },
+      },
+    });
+
+    if (!hasAccess) {
+      throw new ForbiddenError('Not authorized to view this payment');
+    }
+
+    return payment;
   }
 }

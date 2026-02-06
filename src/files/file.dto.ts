@@ -4,7 +4,7 @@ export const presignedUrlRequestSchema = z.object({
   filename: z.string().min(1, 'Filename is required'),
   mimeType: z.string().min(1, 'MIME type is required'),
   fileSize: z.number().positive('File size must be positive').max(10 * 1024 * 1024, 'File size cannot exceed 10MB'),
-  purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
+  purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'PAYMENT_PROOF', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
   // Compression hint for mobile apps
   skipCompression: z.boolean().optional().default(false),
   originalDimensions: z
@@ -24,7 +24,7 @@ export const confirmUploadSchema = z.object({
 export const compressedUploadSchema = z.object({
   filename: z.string().min(1, 'Filename is required'),
   mimeType: z.string().min(1, 'MIME type is required'),
-  purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
+  purpose: z.enum(['LOAD_CARD', 'RECEIVE_CARD', 'PAYMENT_PROOF', 'INVOICE', 'CHAT_ATTACHMENT']).optional(),
   skipCompression: z.boolean().optional().default(false),
 });
 

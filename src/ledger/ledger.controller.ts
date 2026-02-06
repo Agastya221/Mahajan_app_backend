@@ -5,6 +5,10 @@ import {
   createInvoiceSchema,
   updateInvoiceSchema,
   createPaymentSchema,
+  createPaymentRequestSchema,
+  markPaymentPaidSchema,
+  confirmPaymentSchema,
+  disputePaymentSchema,
 } from './ledger.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -132,6 +136,80 @@ export class LedgerController {
     const offset = parseInt(req.query.offset as string) || 0;
 
     const result = await ledgerService.getLedgerTimeline(accountId, req.user!.id, limit, offset);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  });
+
+  // ============================================
+  // TWO-PARTY PAYMENT CONFIRMATION FLOW
+  // ============================================
+
+  // Step 1: Receiver creates payment request
+  createPaymentRequest = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = createPaymentRequestSchema.parse(req.body);
+    const result = await ledgerService.createPaymentRequest(data, req.user!.id);
+
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: 'Payment request created',
+    });
+  });
+
+  // Step 2: Sender marks payment as paid
+  markPaymentAsPaid = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = markPaymentPaidSchema.parse(req.body);
+    const result = await ledgerService.markPaymentAsPaid(data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Payment marked as paid',
+    });
+  });
+
+  // Step 3a: Receiver confirms payment
+  confirmPayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = confirmPaymentSchema.parse(req.body);
+    const result = await ledgerService.confirmPayment(data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Payment confirmed',
+    });
+  });
+
+  // Step 3b: Receiver disputes payment
+  disputePayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = disputePaymentSchema.parse(req.body);
+    const result = await ledgerService.disputePayment(data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Payment disputed',
+    });
+  });
+
+  // Get pending payments for an account
+  getPendingPayments = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { accountId } = req.params;
+    const result = await ledgerService.getPendingPayments(accountId, req.user!.id);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  });
+
+  // Get payment by ID
+  getPaymentById = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { paymentId } = req.params;
+    const result = await ledgerService.getPaymentById(paymentId, req.user!.id);
 
     res.json({
       success: true,

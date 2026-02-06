@@ -28,7 +28,11 @@
       "Bash(__NEW_LINE_fa1089f2d5c59a7a__ echo \"\")",
       "Bash(__NEW_LINE_2302a36d973a4828__ echo \"\")",
       "Bash(powershell:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(timeout /t 8)",
+      "Bash(timeout /t 1)",
+      "Bash(npx kill-port:*)",
+      "Bash(timeout:*)"
     ]
   }
 }

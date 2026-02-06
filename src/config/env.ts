@@ -31,19 +31,20 @@ export const config = {
   },
 
   aws: {
-    region: process.env.AWS_REGION || 'auto', // 'auto' for R2
+    region: process.env.AWS_REGION || 'ap-south-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
     s3Bucket: process.env.AWS_S3_BUCKET!,
-    s3Endpoint: process.env.AWS_S3_ENDPOINT, // R2: https://<account_id>.r2.cloudflarestorage.com
-    publicUrl: process.env.S3_PUBLIC_URL, // R2 public bucket URL or custom domain for CDN
+    s3Endpoint: process.env.AWS_S3_ENDPOINT, // MinIO: http://localhost:9000
+    // publicUrl: process.env.S3_PUBLIC_URL, // TODO: Enable when adding R2/CDN support
   },
 
-  cloudfront: {
-    domain: process.env.CLOUDFRONT_DOMAIN || '', // e.g., d1234abcd.cloudfront.net
-    keyPairId: process.env.CLOUDFRONT_KEY_PAIR_ID || '', // e.g., K2JCJMDEHXQW5F
-    privateKey: process.env.CLOUDFRONT_PRIVATE_KEY || '', // Base64 encoded PEM private key
-  },
+  // TODO: Enable CloudFront when user base grows
+  // cloudfront: {
+  //   domain: process.env.CLOUDFRONT_DOMAIN || '',
+  //   keyPairId: process.env.CLOUDFRONT_KEY_PAIR_ID || '',
+  //   privateKey: process.env.CLOUDFRONT_PRIVATE_KEY || '',
+  // },
 
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:3001',

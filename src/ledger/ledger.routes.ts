@@ -56,7 +56,7 @@ router.patch('/invoices/:invoiceId', authenticate, ledgerController.updateInvoic
 
 /**
  * @route   POST /api/v1/ledger/payments
- * @desc    Record payment
+ * @desc    Record payment (legacy/direct)
  * @access  Private
  */
 router.post('/payments', authenticate, ledgerController.createPayment);
@@ -67,5 +67,51 @@ router.post('/payments', authenticate, ledgerController.createPayment);
  * @access  Private
  */
 router.get('/accounts/:accountId/payments', authenticate, ledgerController.getPayments);
+
+// ============================================
+// TWO-PARTY PAYMENT CONFIRMATION FLOW
+// ============================================
+
+/**
+ * @route   POST /api/v1/ledger/payments/request
+ * @desc    Create payment request (receiver creates)
+ * @access  Private
+ */
+router.post('/payments/request', authenticate, ledgerController.createPaymentRequest);
+
+/**
+ * @route   POST /api/v1/ledger/payments/mark-paid
+ * @desc    Mark payment as paid (sender marks)
+ * @access  Private
+ */
+router.post('/payments/mark-paid', authenticate, ledgerController.markPaymentAsPaid);
+
+/**
+ * @route   POST /api/v1/ledger/payments/confirm
+ * @desc    Confirm payment received (receiver confirms)
+ * @access  Private
+ */
+router.post('/payments/confirm', authenticate, ledgerController.confirmPayment);
+
+/**
+ * @route   POST /api/v1/ledger/payments/dispute
+ * @desc    Dispute payment (receiver disputes)
+ * @access  Private
+ */
+router.post('/payments/dispute', authenticate, ledgerController.disputePayment);
+
+/**
+ * @route   GET /api/v1/ledger/accounts/:accountId/pending-payments
+ * @desc    Get pending payments for account
+ * @access  Private
+ */
+router.get('/accounts/:accountId/pending-payments', authenticate, ledgerController.getPendingPayments);
+
+/**
+ * @route   GET /api/v1/ledger/payments/:paymentId
+ * @desc    Get payment by ID
+ * @access  Private
+ */
+router.get('/payments/:paymentId', authenticate, ledgerController.getPaymentById);
 
 export default router;

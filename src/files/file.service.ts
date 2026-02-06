@@ -4,7 +4,8 @@ import { v4 as uuid } from 'uuid';
 import sharp from 'sharp';
 import prisma from '../config/database';
 import { s3Client } from '../config/s3';
-import { getCdnUrl } from '../config/cdn';
+// TODO: Enable CDN when user base grows
+// import { getCdnUrl } from '../config/cdn';
 import { config } from '../config/env';
 import { NotFoundError, ValidationError } from '../utils/errors';
 import { PresignedUrlRequestDto, CompressedUploadDto } from './file.dto';
@@ -18,6 +19,39 @@ const IMAGE_COMPRESSION_CONFIG = {
   quality: 80,
   targetSizeKB: 300, // Target ~300KB output
 };
+
+// S3 folder path mapping based on file purpose
+const S3_FOLDER_MAPPING: Record<string, string> = {
+  LOAD_CARD: 'proofs/load',
+  RECEIVE_CARD: 'proofs/receive',
+  PAYMENT_PROOF: 'proofs/payments',
+  INVOICE: 'documents/invoices',
+  CHAT_ATTACHMENT: 'chat',
+};
+
+const DEFAULT_S3_FOLDER = 'uploads';
+
+/**
+ * Get the S3 key prefix (folder path) based on file purpose
+ */
+function getS3KeyPrefix(purpose?: string): string {
+  if (!purpose) return DEFAULT_S3_FOLDER;
+  return S3_FOLDER_MAPPING[purpose] || DEFAULT_S3_FOLDER;
+}
+
+/**
+ * Generate a full S3 key with folder structure and date-based subfolder
+ * Format: {folder}/{YYYY}/{MM}/{uuid}.{extension}
+ */
+function generateS3Key(purpose: string | undefined, fileExtension: string): string {
+  const prefix = getS3KeyPrefix(purpose);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const uniqueId = uuid();
+
+  return `${prefix}/${year}/${month}/${uniqueId}.${fileExtension}`;
+}
 
 export class FileService {
   async generatePresignedUrl(data: PresignedUrlRequestDto, uploadedByUserId: string) {
@@ -41,9 +75,9 @@ export class FileService {
       throw new ValidationError('Unsupported file type');
     }
 
-    // Generate unique S3 key
+    // Generate unique S3 key with purpose-based folder structure
     const fileExt = data.filename.split('.').pop() || 'unknown';
-    const s3Key = `uploads/${uuid()}.${fileExt}`;
+    const s3Key = generateS3Key(data.purpose, fileExt);
 
     // Generate S3 URL
     const url = config.aws.s3Endpoint
@@ -212,23 +246,10 @@ export class FileService {
       }
     }
 
-    // Try CDN URL first (CloudFront > Public URL)
-    // This provides better performance and lower egress costs
-    if (file.s3Key) {
-      const cdnResult = getCdnUrl(file.s3Key, 3600);
+    // TODO: Enable CDN URL logic when user base grows
+    // Priority will be: CloudFront signed URL > Public URL (R2) > S3 presigned URL
 
-      if (cdnResult) {
-        return {
-          downloadUrl: cdnResult.url,
-          filename: file.fileName,
-          expiresIn: cdnResult.expiresIn,
-          isPublic: cdnResult.type === 'public',
-          cdnType: cdnResult.type,
-        };
-      }
-    }
-
-    // Fall back to S3 presigned URL if no CDN configured
+    // Use S3 presigned URL for downloads (1 hour expiry)
     const command = new GetObjectCommand({
       Bucket: config.aws.s3Bucket,
       Key: file.s3Key || undefined,
@@ -239,9 +260,8 @@ export class FileService {
     return {
       downloadUrl,
       filename: file.fileName,
-      expiresIn: 3600, // seconds
+      expiresIn: 3600,
       isPublic: false,
-      cdnType: 's3' as const,
     };
   }
 
@@ -296,6 +316,7 @@ export class FileService {
     const mapping: Record<string, AttachmentType> = {
       LOAD_CARD: AttachmentType.LOAD_PHOTO,
       RECEIVE_CARD: AttachmentType.RECEIVE_PHOTO,
+      PAYMENT_PROOF: AttachmentType.PAYMENT_PROOF,
       INVOICE: AttachmentType.INVOICE,
       RECEIPT: AttachmentType.RECEIPT,
     };
@@ -407,9 +428,10 @@ export class FileService {
       finalMimeType = compressed.mimeType;
     }
 
-    // Generate unique S3 key with jpg extension for compressed images
+    // Generate unique S3 key with purpose-based folder structure
+    // Use jpg extension for compressed images
     const fileExt = finalMimeType === 'image/jpeg' ? 'jpg' : data.filename.split('.').pop() || 'unknown';
-    const s3Key = `uploads/${uuid()}.${fileExt}`;
+    const s3Key = generateS3Key(data.purpose, fileExt);
 
     // Generate S3 URL
     const url = config.aws.s3Endpoint

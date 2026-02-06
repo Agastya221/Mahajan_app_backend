@@ -88,9 +88,18 @@ enum PaymentTag {
   OTHER
 }
 
+enum PaymentStatus {
+  PENDING           // Payment request created, not yet paid
+  MARKED_AS_PAID    // Sender claims they have paid
+  CONFIRMED         // Receiver confirms payment received
+  DISPUTED          // Receiver disputes the payment
+  CANCELLED         // Payment request cancelled
+}
+
 enum AttachmentType {
   LOAD_PHOTO
   RECEIVE_PHOTO
+  PAYMENT_PROOF
   INVOICE
   RECEIPT
   OTHER
@@ -158,6 +167,11 @@ model User {
   createdEvents        TripEvent[]
   exportLogs           ExportLog[]
   refreshTokens        RefreshToken[]
+
+  // Payment confirmation flow relations
+  markedPaidPayments   Payment[] @relation("MarkedPaidPayments")
+  confirmedPayments    Payment[] @relation("ConfirmedPayments")
+  disputedPayments     Payment[] @relation("DisputedPayments")
 
   @@index([status])
 }
@@ -598,21 +612,51 @@ model Payment {
   invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   tripId    String?
   trip      Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  // Amount
   amount    BigInt
-  paidAt    DateTime @default(now())
-  mode      String?
-  reference String?
-  tag       PaymentTag?
+
+  // Payment Status Flow
+  status    PaymentStatus @default(PENDING)
+
+  // Payment method details
+  mode      String?       // "UPI", "BANK_TRANSFER", "CASH", "CHEQUE"
+  tag       PaymentTag?   // ADVANCE, PARTIAL, FINAL, DUE, OTHER
+
+  // Sender's proof (when marking as paid)
+  markedPaidAt    DateTime?
+  markedPaidBy    String?
+  markedPaidUser  User?     @relation("MarkedPaidPayments", fields: [markedPaidBy], references: [id], onDelete: SetNull)
+  utrNumber       String?   // UTR/Transaction reference (optional)
+  proofNote       String?   // Any note from sender
+
+  // Receiver's confirmation
+  confirmedAt     DateTime?
+  confirmedBy     String?
+  confirmedUser   User?     @relation("ConfirmedPayments", fields: [confirmedBy], references: [id], onDelete: SetNull)
+
+  // Dispute handling
+  disputedAt      DateTime?
+  disputedBy      String?
+  disputedUser    User?     @relation("DisputedPayments", fields: [disputedBy], references: [id], onDelete: SetNull)
+  disputeReason   String?
+
+  // Legacy fields (keep for backward compatibility)
+  reference String?       // Old transaction ID field
   remarks   String?
+  paidAt    DateTime?     // Set when CONFIRMED (not when created)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   attachments  Attachment[]
   chatMessages ChatMessage[]
 
-  createdAt DateTime @default(now())
-
+  @@index([accountId, status])
   @@index([accountId, paidAt])
   @@index([invoiceId, paidAt])
   @@index([tripId, paidAt])
+  @@index([status, createdAt])
 }
 
 model Dispute {
