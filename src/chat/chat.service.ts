@@ -36,61 +36,53 @@ export class ChatService {
       throw new ForbiddenError('Not authorized to access this account');
     }
 
-    // ✅ CRITICAL FIX: Use transaction with try-catch to handle race condition
-    let isNew = false;
-    const thread = await prisma.$transaction(async (tx) => {
-      try {
-        // Try to create thread
-        isNew = true;
-        return await tx.chatThread.create({
-          data: {
-            orgId: account.ownerOrgId,
-            accountId,
+    const threadInclude = {
+      account: {
+        include: {
+          ownerOrg: {
+            select: { id: true, name: true, gstin: true },
           },
-          include: {
-            account: {
-              include: {
-                ownerOrg: {
-                  select: { id: true, name: true, gstin: true },
-                },
-                counterpartyOrg: {
-                  select: { id: true, name: true, gstin: true },
-                },
-              },
-            },
+          counterpartyOrg: {
+            select: { id: true, name: true, gstin: true },
           },
-        });
-      } catch (error: any) {
-        // If unique constraint violation, fetch existing thread
-        if (error.code === 'P2002') {
-          isNew = false;
-          const existing = await tx.chatThread.findUnique({
-            where: { accountId },
-            include: {
-              account: {
-                include: {
-                  ownerOrg: {
-                    select: { id: true, name: true, gstin: true },
-                  },
-                  counterpartyOrg: {
-                    select: { id: true, name: true, gstin: true },
-                  },
-                },
-              },
-            },
-          });
+        },
+      },
+    };
 
-          if (!existing) {
-            throw new Error('Thread creation failed and existing thread not found');
-          }
-
-          return existing;
-        }
-        throw error;
-      }
+    // Check if thread already exists
+    const existing = await prisma.chatThread.findUnique({
+      where: { accountId },
+      include: threadInclude,
     });
 
-    return { thread, isNew };
+    if (existing) {
+      return { thread: existing, isNew: false };
+    }
+
+    // Create new thread (handle race condition with try/catch outside transaction)
+    try {
+      const thread = await prisma.chatThread.create({
+        data: {
+          orgId: account.ownerOrgId,
+          accountId,
+        },
+        include: threadInclude,
+      });
+      return { thread, isNew: true };
+    } catch (error: any) {
+      // If unique constraint violation (race condition), fetch existing
+      if (error.code === 'P2002') {
+        const raceThread = await prisma.chatThread.findUnique({
+          where: { accountId },
+          include: threadInclude,
+        });
+        if (!raceThread) {
+          throw new Error('Thread creation failed and existing thread not found');
+        }
+        return { thread: raceThread, isNew: false };
+      }
+      throw error;
+    }
   }
 
   private async createOrGetTripThread(tripId: string, userId: string) {
@@ -114,61 +106,52 @@ export class ChatService {
       throw new ForbiddenError('Not authorized to access this trip');
     }
 
-    // ✅ CRITICAL FIX: Use transaction with try-catch to handle race condition
-    let isNew = false;
-    const thread = await prisma.$transaction(async (tx) => {
-      try {
-        // Try to create thread
-        isNew = true;
-        return await tx.chatThread.create({
-          data: {
-            orgId: trip.sourceOrgId,
-            tripId,
+    const tripThreadInclude = {
+      trip: {
+        include: {
+          sourceOrg: {
+            select: { id: true, name: true },
           },
-          include: {
-            trip: {
-              include: {
-                sourceOrg: {
-                  select: { id: true, name: true },
-                },
-                destinationOrg: {
-                  select: { id: true, name: true },
-                },
-              },
-            },
+          destinationOrg: {
+            select: { id: true, name: true },
           },
-        });
-      } catch (error: any) {
-        // If unique constraint violation, fetch existing thread
-        if (error.code === 'P2002') {
-          isNew = false;
-          const existing = await tx.chatThread.findUnique({
-            where: { tripId },
-            include: {
-              trip: {
-                include: {
-                  sourceOrg: {
-                    select: { id: true, name: true },
-                  },
-                  destinationOrg: {
-                    select: { id: true, name: true },
-                  },
-                },
-              },
-            },
-          });
+        },
+      },
+    };
 
-          if (!existing) {
-            throw new Error('Thread creation failed and existing thread not found');
-          }
-
-          return existing;
-        }
-        throw error;
-      }
+    // Check if thread already exists
+    const existing = await prisma.chatThread.findUnique({
+      where: { tripId },
+      include: tripThreadInclude,
     });
 
-    return { thread, isNew };
+    if (existing) {
+      return { thread: existing, isNew: false };
+    }
+
+    // Create new thread (handle race condition with try/catch outside transaction)
+    try {
+      const thread = await prisma.chatThread.create({
+        data: {
+          orgId: trip.sourceOrgId,
+          tripId,
+        },
+        include: tripThreadInclude,
+      });
+      return { thread, isNew: true };
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        const raceThread = await prisma.chatThread.findUnique({
+          where: { tripId },
+          include: tripThreadInclude,
+        });
+        if (!raceThread) {
+          throw new Error('Thread creation failed and existing thread not found');
+        }
+        return { thread: raceThread, isNew: false };
+      }
+      throw error;
+    }
   }
 
   async getThreads(userId: string, filters?: { accountId?: string; tripId?: string; page?: number; limit?: number }) {
