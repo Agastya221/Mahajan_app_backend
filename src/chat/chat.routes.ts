@@ -48,18 +48,11 @@ router.post('/threads/:threadId/messages', authenticate, chatController.sendMess
 router.post('/threads/:threadId/read', authenticate, chatController.markAsRead);
 
 /**
- * @route   POST /api/v1/chat/threads/:threadId/typing
- * @desc    Set typing status
+ * @route   POST /api/v1/chat/threads/:threadId/delivered
+ * @desc    Mark messages as delivered (single tick)
  * @access  Private
  */
-router.post('/threads/:threadId/typing', authenticate, chatController.setTyping);
-
-/**
- * @route   GET /api/v1/chat/threads/:threadId/typing
- * @desc    Get active typers in thread
- * @access  Private
- */
-router.get('/threads/:threadId/typing', authenticate, chatController.getTyping);
+router.post('/threads/:threadId/delivered', authenticate, chatController.markAsDelivered);
 
 /**
  * @route   POST /api/v1/chat/threads/:threadId/pin

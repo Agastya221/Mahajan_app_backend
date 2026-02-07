@@ -507,7 +507,7 @@ export class LedgerService {
           threadId: thread.id,
           senderUserId: createdBy,
           content: `Payment of ₹${(Number(data.amount) / 100).toFixed(2)} received via ${data.paymentMethod} (${data.tag})`,
-          messageType: 'PAYMENT_NOTIFICATION',
+          messageType: 'PAYMENT_UPDATE',
           paymentId: payment.id,
         },
       });
@@ -841,7 +841,7 @@ export class LedgerService {
             threadId: thread.id,
             senderUserId: userId,
             content: `Payment of ₹${(Number(payment.amount) / 100).toLocaleString('en-IN')} confirmed`,
-            messageType: 'PAYMENT_CONFIRMED',
+            messageType: 'PAYMENT_UPDATE',
             paymentId: payment.id,
           },
         });

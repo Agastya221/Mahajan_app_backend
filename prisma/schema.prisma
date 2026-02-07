@@ -109,7 +109,20 @@ enum AttachmentType {
   PAYMENT_PROOF
   INVOICE
   RECEIPT
+  CHAT_IMAGE
+  CHAT_DOCUMENT
   OTHER
+}
+
+enum ChatMessageType {
+  TEXT
+  IMAGE
+  PDF
+  FILE
+  SYSTEM_MESSAGE
+  PAYMENT_UPDATE
+  INVOICE_UPDATE
+  LOCATION
 }
 
 enum LedgerDirection {
@@ -168,7 +181,6 @@ model User {
   memberships          OrgMember[]
   driverProfile        DriverProfile?
   sentMessages         ChatMessage[] @relation("SentMessages")
-  typingIndicators     TypingIndicator[] @relation("TypingUsers")
   createdLoadCards     TripLoadCard[]
   createdReceiveCards  TripReceiveCard[] @relation("CreatedReceiveCards")
   approvedReceiveCards TripReceiveCard[] @relation("ApprovedReceiveCards")
@@ -705,7 +717,6 @@ model ChatThread {
   updatedAt DateTime @updatedAt
 
   messages         ChatMessage[]
-  typingIndicators TypingIndicator[]
 
   @@unique([accountId])
   @@unique([tripId])
@@ -716,21 +727,6 @@ model ChatThread {
   @@index([tripId, updatedAt])
 }
 
-model TypingIndicator {
-  id        String @id @default(cuid())
-  threadId  String
-  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User @relation("TypingUsers", fields: [userId], references: [id], onDelete: Cascade)
-  isTyping  Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([threadId, userId])
-  @@index([threadId, isTyping, updatedAt])
-}
-
 model ChatMessage {
   id           String @id @default(cuid())
   threadId     String
@@ -739,7 +735,7 @@ model ChatMessage {
   senderUser   User? @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: SetNull)
 
   content     String?
-  messageType String @default("TEXT")
+  messageType ChatMessageType @default(TEXT)
   tag         PaymentTag?
 
   paymentId     String?

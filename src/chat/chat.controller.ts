@@ -82,25 +82,14 @@ export class ChatController {
     });
   });
 
-  setTyping = asyncHandler(async (req: AuthRequest, res: Response) => {
+  markAsDelivered = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
-    const { isTyping } = req.body;
-
-    const result = await chatService.setTyping(threadId, req.user!.id, isTyping);
+    const result = await chatService.markMessagesAsDelivered(threadId, req.user!.id);
 
     res.json({
       success: true,
       data: result,
-    });
-  });
-
-  getTyping = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { threadId } = req.params;
-    const typers = await chatService.getActiveTypers(threadId, req.user!.id);
-
-    res.json({
-      success: true,
-      data: typers,
+      message: `Marked ${result.count} message(s) as delivered`,
     });
   });
 

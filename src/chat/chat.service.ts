@@ -325,7 +325,25 @@ export class ChatService {
             phone: true,
           },
         },
-        attachments: true,
+        attachments: {
+          select: {
+            id: true,
+            url: true,
+            fileName: true,
+            mimeType: true,
+            sizeBytes: true,
+            type: true,
+          },
+        },
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            messageType: true,
+            senderUser: { select: { id: true, name: true } },
+            attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
+          },
+        },
         payment: {
           select: {
             id: true,
@@ -369,86 +387,117 @@ export class ChatService {
   async sendMessage(threadId: string, data: SendMessageDto, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
 
-    // Verify attachments belong to user
+    // Verify attachments exist and belong to user
     if (data.attachmentIds && data.attachmentIds.length > 0) {
       const attachments = await prisma.attachment.findMany({
         where: {
           id: { in: data.attachmentIds },
           uploadedBy: userId,
+          status: 'COMPLETED',
         },
       });
 
       if (attachments.length !== data.attachmentIds.length) {
-        throw new ValidationError('Some attachments not found or unauthorized');
+        throw new ValidationError('Some attachments not found, not uploaded by you, or still pending');
       }
     }
 
-    // Create message
+    // Verify replyToId belongs to this thread
+    if (data.replyToId) {
+      const replyMsg = await prisma.chatMessage.findFirst({
+        where: { id: data.replyToId, threadId },
+      });
+      if (!replyMsg) throw new ValidationError('Reply message not found in this thread');
+    }
+
+    // Determine preview text for thread
+    let previewText = data.content?.substring(0, 100) || '';
+    if (data.messageType === 'IMAGE') previewText = '📷 Photo';
+    else if (data.messageType === 'PDF') previewText = '📄 Document';
+    else if (data.messageType === 'FILE') previewText = '📎 File';
+
     const message = await prisma.$transaction(async (tx) => {
       const newMessage = await tx.chatMessage.create({
         data: {
           threadId,
           senderUserId: userId,
-          content: data.content,
+          content: data.content || null,
+          messageType: data.messageType || 'TEXT',
+          replyToId: data.replyToId || null,
         },
         include: {
           senderUser: {
+            select: { id: true, name: true, phone: true },
+          },
+          replyTo: {
             select: {
               id: true,
-              name: true,
-              phone: true,
+              content: true,
+              messageType: true,
+              senderUser: { select: { id: true, name: true } },
             },
           },
-          attachments: true,
         },
       });
 
-      // Link attachments
+      // Link attachments to message
       if (data.attachmentIds && data.attachmentIds.length > 0) {
         await tx.attachment.updateMany({
-          where: {
-            id: { in: data.attachmentIds },
-          },
-          data: {
-            messageId: newMessage.id,
-          },
+          where: { id: { in: data.attachmentIds } },
+          data: { messageId: newMessage.id },
         });
       }
 
-      // ✅ Update thread metadata: updatedAt, lastMessageAt, lastMessageText, unreadCount
+      // Update thread metadata
       await tx.chatThread.update({
         where: { id: threadId },
         data: {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
-          lastMessageText: data.content?.substring(0, 100), // First 100 chars
-          unreadCount: { increment: 1 }, // Increment unread count
+          lastMessageText: previewText,
+          unreadCount: { increment: 1 },
         },
       });
 
       return newMessage;
     });
 
-    // Reload message with attachments
+    // Reload with attachments
     const fullMessage = await prisma.chatMessage.findUnique({
       where: { id: message.id },
       include: {
-        senderUser: {
+        senderUser: { select: { id: true, name: true, phone: true } },
+        attachments: {
           select: {
             id: true,
-            name: true,
-            phone: true,
+            url: true,
+            fileName: true,
+            mimeType: true,
+            sizeBytes: true,
+            type: true,
           },
         },
-        attachments: true,
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            messageType: true,
+            senderUser: { select: { id: true, name: true } },
+            attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
+          },
+        },
       },
     });
 
-    // TODO: Broadcast via WebSocket to chat room
-    // const socketGateway = (global as any).socketGateway;
-    // if (socketGateway) {
-    //   socketGateway.broadcastToChat(threadId, 'chat:message', fullMessage);
-    // }
+    // Broadcast via Redis WebSocket
+    try {
+      await redisPublisher.publish(
+        `thread:${threadId}:message`,
+        JSON.stringify(fullMessage)
+      );
+    } catch (error) {
+      console.error('Failed to broadcast message:', error);
+    }
 
     return fullMessage;
   }
@@ -522,70 +571,38 @@ export class ChatService {
     return result;
   }
 
-  // ✅ WhatsApp-like Feature: Typing Indicators
-  async setTyping(threadId: string, userId: string, isTyping: boolean) {
+  // ✅ WhatsApp-like Feature: Delivery Acknowledgment (Single Tick)
+  async markMessagesAsDelivered(threadId: string, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
 
-    await prisma.typingIndicator.upsert({
+    // Mark all messages from OTHER senders as delivered
+    const result = await prisma.chatMessage.updateMany({
       where: {
-        threadId_userId: {
-          threadId,
-          userId,
-        },
-      },
-      create: {
         threadId,
-        userId,
-        isTyping,
+        senderUserId: { not: userId },
+        isDelivered: false,
       },
-      update: {
-        isTyping,
-        updatedAt: new Date(),
+      data: {
+        isDelivered: true,
+        deliveredAt: new Date(),
       },
     });
 
-    // Broadcast typing status via WebSocket
+    // Broadcast delivery receipt via Redis for WebSocket
     try {
       await redisPublisher.publish(
-        `thread:${threadId}:typing`,
+        `thread:${threadId}:delivered`,
         JSON.stringify({
           userId,
-          isTyping,
-          timestamp: new Date(),
+          deliveredAt: new Date(),
+          count: result.count,
         })
       );
     } catch (error) {
-      console.error('Failed to broadcast typing indicator:', error);
+      console.error('Failed to broadcast delivery receipt:', error);
     }
 
-    return { success: true };
-  }
-
-  // ✅ WhatsApp-like Feature: Get Active Typers
-  async getActiveTypers(threadId: string, userId: string) {
-    await this.getThreadById(threadId, userId);
-
-    // Get typing indicators updated in last 5 seconds
-    const fiveSecondsAgo = new Date(Date.now() - 5000);
-
-    const typers = await prisma.typingIndicator.findMany({
-      where: {
-        threadId,
-        isTyping: true,
-        userId: { not: userId }, // Exclude current user
-        updatedAt: { gte: fiveSecondsAgo },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
-
-    return typers;
+    return { count: result.count };
   }
 
   // ✅ WhatsApp-like Feature: Pin/Unpin Thread

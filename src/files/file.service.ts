@@ -93,7 +93,7 @@ export class FileService {
         mimeType: data.mimeType,
         sizeBytes: data.fileSize,
         uploadedBy: uploadedByUserId,
-        type: this.mapPurposeToType(data.purpose),
+        type: this.mapPurposeToType(data.purpose, data.mimeType),
       },
     });
 
@@ -310,7 +310,7 @@ export class FileService {
     return { success: true };
   }
 
-  private mapPurposeToType(purpose?: string): AttachmentType {
+  private mapPurposeToType(purpose?: string, mimeType?: string): AttachmentType {
     if (!purpose) return AttachmentType.OTHER;
 
     const mapping: Record<string, AttachmentType> = {
@@ -320,6 +320,11 @@ export class FileService {
       INVOICE: AttachmentType.INVOICE,
       RECEIPT: AttachmentType.RECEIPT,
     };
+
+    if (purpose === 'CHAT_ATTACHMENT') {
+      if (mimeType?.startsWith('image/')) return AttachmentType.CHAT_IMAGE;
+      return AttachmentType.CHAT_DOCUMENT;
+    }
 
     return mapping[purpose] || AttachmentType.OTHER;
   }
@@ -457,7 +462,7 @@ export class FileService {
         mimeType: finalMimeType,
         sizeBytes: finalBuffer.length,
         uploadedBy: uploadedByUserId,
-        type: this.mapPurposeToType(data.purpose),
+        type: this.mapPurposeToType(data.purpose, finalMimeType),
         status: 'COMPLETED',
       },
     });

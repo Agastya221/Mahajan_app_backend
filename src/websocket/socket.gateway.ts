@@ -156,7 +156,7 @@ export class SocketGateway {
         socket.emit('org:left', { orgId });
       });
 
-      // Join chat thread
+      // Join chat thread + auto-mark delivery
       socket.on('chat:join', async ({ threadId }: { threadId: string }) => {
         try {
           // Verify user has access to chat thread
@@ -169,6 +169,33 @@ export class SocketGateway {
           socket.join(`chat:${threadId}`);
           console.log(`Socket ${socket.id} joined chat:${threadId}`);
           socket.emit('chat:joined', { threadId });
+
+          // Auto-mark messages as delivered when user joins the chat room
+          try {
+            const result = await prisma.chatMessage.updateMany({
+              where: {
+                threadId,
+                senderUserId: { not: user.id },
+                isDelivered: false,
+              },
+              data: {
+                isDelivered: true,
+                deliveredAt: new Date(),
+              },
+            });
+
+            if (result.count > 0) {
+              // Notify other participants about delivery
+              socket.to(`chat:${threadId}`).emit('chat:delivered', {
+                threadId,
+                userId: user.id,
+                deliveredAt: new Date(),
+                count: result.count,
+              });
+            }
+          } catch (err) {
+            console.error('Error auto-marking messages as delivered:', err);
+          }
         } catch (error) {
           console.error('Error joining chat:', error);
           socket.emit('error', { message: 'Failed to join chat' });
@@ -230,18 +257,51 @@ export class SocketGateway {
       console.log(`Subscribed to ${count} Redis status channel pattern(s)`);
     });
 
+    // Subscribe to chat message and delivery channels
+    redisSubscriber.psubscribe('thread:*:message', (err, count) => {
+      if (err) {
+        console.error('Failed to subscribe to Redis chat message channels:', err);
+        return;
+      }
+      console.log(`Subscribed to ${count} Redis chat message channel pattern(s)`);
+    });
+
+    redisSubscriber.psubscribe('thread:*:delivered', (err, count) => {
+      if (err) {
+        console.error('Failed to subscribe to Redis delivery channels:', err);
+        return;
+      }
+      console.log(`Subscribed to ${count} Redis delivery channel pattern(s)`);
+    });
+
+    redisSubscriber.psubscribe('thread:*:read', (err, count) => {
+      if (err) {
+        console.error('Failed to subscribe to Redis read receipt channels:', err);
+        return;
+      }
+      console.log(`Subscribed to ${count} Redis read receipt channel pattern(s)`);
+    });
+
     redisSubscriber.on('pmessage', (pattern, channel, message) => {
       try {
-        const tripId = channel.split(':')[1];
         const data = JSON.parse(message);
 
         if (pattern === 'trip:*:location') {
-          // Broadcast location update to all sockets in the trip room
+          const tripId = channel.split(':')[1];
           this.io.to(`trip:${tripId}`).emit('tracking:location-update', data);
         } else if (pattern === 'trip:*:status') {
-          // Broadcast status update (e.g., DELIVERED) to all sockets in the trip room
+          const tripId = channel.split(':')[1];
           this.io.to(`trip:${tripId}`).emit('trip:status-update', data);
-          console.log(`📢 Broadcasted status update for trip ${tripId}:`, data.status);
+          console.log(`Broadcasted status update for trip ${tripId}:`, data.status);
+        } else if (pattern === 'thread:*:message') {
+          const threadId = channel.split(':')[1];
+          this.io.to(`chat:${threadId}`).emit('chat:message', data);
+        } else if (pattern === 'thread:*:delivered') {
+          const threadId = channel.split(':')[1];
+          this.io.to(`chat:${threadId}`).emit('chat:delivered', data);
+        } else if (pattern === 'thread:*:read') {
+          const threadId = channel.split(':')[1];
+          this.io.to(`chat:${threadId}`).emit('chat:read', data);
         }
       } catch (error) {
         console.error('Error handling Redis message:', error);
