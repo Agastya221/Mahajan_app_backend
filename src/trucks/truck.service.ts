@@ -18,18 +18,13 @@ export class TruckService {
       throw new ForbiddenError('Not a member of this organization');
     }
 
-    // Check if truck number already exists for this org
+    // Check if truck number already exists (truck numbers are globally unique)
     const existing = await prisma.truck.findUnique({
-      where: {
-        orgId_number: {
-          orgId: data.orgId,
-          number: data.number,
-        },
-      },
+      where: { number: data.number },
     });
 
     if (existing) {
-      throw new ConflictError('Truck with this number already exists in organization');
+      throw new ConflictError('Truck with this number already exists');
     }
 
     const truck = await prisma.truck.create({
@@ -160,18 +155,17 @@ export class TruckService {
       throw new ForbiddenError('Not a member of this organization');
     }
 
-    // If updating number, check uniqueness
+    // If updating number, check uniqueness (truck numbers are globally unique)
     if (data.number) {
       const existing = await prisma.truck.findFirst({
         where: {
-          orgId: truck.orgId,
           number: data.number,
           id: { not: truckId },
         },
       });
 
       if (existing) {
-        throw new ConflictError('Truck with this number already exists in organization');
+        throw new ConflictError('Truck with this number already exists');
       }
     }
 

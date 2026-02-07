@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/database';
 import { config } from '../config/env';
-import { UnauthorizedError, ConflictError, ValidationError } from '../utils/errors';
+import { UnauthorizedError, ConflictError } from '../utils/errors';
 import { RegisterDto } from './auth.dto';
 import { UserRole } from '@prisma/client';
 import { redisClient } from '../config/redis';
@@ -94,12 +94,14 @@ export class AuthService {
       throw new ConflictError('User with this phone already exists');
     }
 
-    // Create user — SaaS model: always MAHAJAN_STAFF on self-registration
+    // Determine role based on registration path
+    const role = data.registerAs === 'DRIVER' ? UserRole.DRIVER : UserRole.MAHAJAN;
+
     const user = await prisma.user.create({
       data: {
         phone: decoded.phone,
         name: data.name,
-        role: UserRole.MAHAJAN_STAFF,
+        role,
       },
       select: {
         id: true,
@@ -110,11 +112,40 @@ export class AuthService {
       },
     });
 
+    // If MAHAJAN, auto-create Org and OrgMember
+    if (role === UserRole.MAHAJAN) {
+      const org = await prisma.org.create({
+        data: {
+          name: `${data.name}'s Business`,
+          phone: decoded.phone,
+        },
+      });
+
+      await prisma.orgMember.create({
+        data: {
+          orgId: org.id,
+          userId: user.id,
+        },
+      });
+    }
+
+    // If DRIVER, auto-create empty DriverProfile and link pending trips
+    if (role === UserRole.DRIVER) {
+      const driverProfile = await prisma.driverProfile.create({
+        data: {
+          userId: user.id,
+        },
+      });
+
+      // Link any trips waiting for this driver's phone number
+      await this.linkPendingDriverTrips(decoded.phone, driverProfile.id);
+    }
+
     // Generate tokens
     const accessToken = this.generateAccessToken(user.id, user.phone, user.role);
     const refreshToken = await this.createRefreshToken(user.id, deviceInfo);
 
-    logger.info('New user registered', { userId: user.id, phone: user.phone });
+    logger.info('New user registered', { userId: user.id, phone: user.phone, role });
 
     return {
       user,
@@ -216,6 +247,34 @@ export class AuthService {
   }
 
   // ─── Helpers ─────────────────────────────────────────────
+
+  private async linkPendingDriverTrips(driverPhone: string, driverProfileId: string) {
+    // Find all trips that were created with this driver's phone but driver hadn't registered yet
+    const pendingTrips = await prisma.trip.findMany({
+      where: {
+        pendingDriverPhone: driverPhone,
+        driverId: null,
+        status: 'CREATED',
+      },
+    });
+
+    for (const trip of pendingTrips) {
+      await prisma.trip.update({
+        where: { id: trip.id },
+        data: {
+          driverId: driverProfileId,
+          pendingDriverPhone: null,
+          status: 'ASSIGNED',
+        },
+      });
+
+      logger.info('Linked pending trip to newly registered driver', {
+        tripId: trip.id,
+        driverPhone,
+        driverProfileId,
+      });
+    }
+  }
 
   private generateAccessToken(userId: string, phone: string, role: UserRole): string {
     return jwt.sign(

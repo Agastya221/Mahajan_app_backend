@@ -18,6 +18,8 @@ import ledgerRoutes from './ledger/ledger.routes';
 import chatRoutes from './chat/chat.routes';
 import itemRoutes from './items/item.routes';
 import exportRoutes from './export/export.routes';
+import driverPaymentRoutes from './driver-payments/driver-payment.routes';
+import userRoutes from './users/user.routes';
 import healthRoutes from './health/health.routes';
 import mockLocationRoutes from './dev/mock-location.routes';
 
@@ -102,6 +104,8 @@ export function createApp(): Application {
   app.use('/api/v1/chat', chatRoutes);
   app.use('/api/v1/items', itemRoutes);
   app.use('/api/v1/exports', exportRoutes);
+  app.use('/api/v1', driverPaymentRoutes);
+  app.use('/api/v1/users', userRoutes);
 
   // Development-only routes (mock location simulator)
   if (config.nodeEnv === 'development') {

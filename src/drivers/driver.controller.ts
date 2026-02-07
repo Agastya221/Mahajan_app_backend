@@ -18,12 +18,12 @@ export class DriverController {
   });
 
   getDrivers = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, page, limit } = req.query;
-    const result = await driverService.getDrivers(
-      orgId as string | undefined,
-      page ? parseInt(page as string, 10) : undefined,
-      limit ? parseInt(limit as string, 10) : undefined,
-    );
+    const { phone, page, limit } = req.query;
+    const result = await driverService.getDrivers({
+      phone: phone as string | undefined,
+      page: page ? parseInt(page as string, 10) : undefined,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
+    });
 
     res.json({
       success: true,

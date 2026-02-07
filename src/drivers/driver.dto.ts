@@ -3,7 +3,6 @@ import { phoneSchema } from '../utils/validators';
 
 export const createDriverSchema = z.object({
   userId: z.string().cuid('Invalid user ID'),
-  orgId: z.string().cuid('Invalid organization ID').optional(),
   licenseNo: z.string().optional(),
   emergencyPhone: phoneSchema.optional(),
   notes: z.string().optional(),

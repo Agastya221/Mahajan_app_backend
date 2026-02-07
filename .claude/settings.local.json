@@ -32,7 +32,8 @@
       "Bash(timeout /t 8)",
       "Bash(timeout /t 1)",
       "Bash(npx kill-port:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"yes\" npx prisma migrate:*)"
     ]
   }
 }

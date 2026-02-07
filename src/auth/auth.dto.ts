@@ -11,13 +11,13 @@ export const verifyWidgetTokenSchema = z.object({
 
 /**
  * Complete registration for new users (after OTP verification)
- * SaaS model: role is always MAHAJAN_STAFF on self-registration.
- * MAHAJAN_OWNER requires payment verification (admin-only upgrade).
- * DRIVER accounts are created by org admins, not self-registered.
+ * Normal signup → MAHAJAN (auto-creates Org + OrgMember)
+ * Driver signup → DRIVER (auto-creates DriverProfile)
  */
 export const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   verificationToken: z.string().min(1, 'Verification token is required'),
+  registerAs: z.enum(['MAHAJAN', 'DRIVER']).default('MAHAJAN'),
 });
 
 /**

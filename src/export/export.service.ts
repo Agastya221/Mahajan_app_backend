@@ -44,7 +44,7 @@ export class ExportService {
         truck: { select: { number: true } },
         driver: {
           include: {
-            user: { select: { name: true } },
+            user: { select: { name: true, phone: true } },
           },
         },
         loadCard: {
@@ -58,6 +58,7 @@ export class ExportService {
           },
         },
         payments: true,
+        driverPayment: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -91,6 +92,11 @@ export class ExportService {
       { header: 'Receive Amount (₹)', key: 'receiveAmount', width: 15 },
       { header: 'Status', key: 'status', width: 12 },
       { header: 'Payment Status', key: 'paymentStatus', width: 15 },
+      { header: 'Driver Phone', key: 'driverPhone', width: 15 },
+      { header: 'Driver Payment (₹)', key: 'driverPaymentAmount', width: 18 },
+      { header: 'Driver Paid By', key: 'driverPaymentPaidBy', width: 15 },
+      { header: 'Driver Paid (₹)', key: 'driverPaidAmount', width: 15 },
+      { header: 'Driver Payment Status', key: 'driverPaymentStatus', width: 18 },
     ];
 
     // Style header row
@@ -108,6 +114,9 @@ export class ExportService {
       const receiveItems = trip.receiveCard?.items || [];
       const driverName = trip.driver?.user.name || '-';
 
+      const driverPhone = trip.driver?.user.phone || trip.pendingDriverPhone || '-';
+      const dp = trip.driverPayment;
+
       if (loadItems.length === 0) {
         sheet.addRow({
           tripId: trip.id.slice(-8).toUpperCase(),
@@ -121,6 +130,11 @@ export class ExportService {
           itemName: '-',
           status: trip.status,
           paymentStatus: this.getPaymentStatus(trip),
+          driverPhone,
+          driverPaymentAmount: dp ? Number(dp.totalAmount) : '',
+          driverPaymentPaidBy: dp?.paidBy || '',
+          driverPaidAmount: dp ? Number(dp.paidAmount) : '',
+          driverPaymentStatus: dp?.status || '',
         });
         rowCount++;
         continue;
@@ -152,6 +166,11 @@ export class ExportService {
           receiveAmount: receiveItem?.amount ? Number(receiveItem.amount) : '',
           status: trip.status,
           paymentStatus: this.getPaymentStatus(trip),
+          driverPhone,
+          driverPaymentAmount: dp ? Number(dp.totalAmount) : '',
+          driverPaymentPaidBy: dp?.paidBy || '',
+          driverPaidAmount: dp ? Number(dp.paidAmount) : '',
+          driverPaymentStatus: dp?.status || '',
         });
         rowCount++;
       }

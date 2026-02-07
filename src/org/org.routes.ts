@@ -41,25 +41,4 @@ router.patch('/:orgId', authenticate, orgController.updateOrg);
  */
 router.delete('/:orgId', authenticate, orgController.deleteOrg);
 
-/**
- * @route   POST /api/v1/orgs/:orgId/members
- * @desc    Add member to organization
- * @access  Private (owner only)
- */
-router.post('/:orgId/members', authenticate, orgController.addMember);
-
-/**
- * @route   PATCH /api/v1/orgs/:orgId/members/:memberId
- * @desc    Update member role
- * @access  Private (owner only)
- */
-router.patch('/:orgId/members/:memberId', authenticate, orgController.updateMemberRole);
-
-/**
- * @route   DELETE /api/v1/orgs/:orgId/members/:memberId
- * @desc    Remove member from organization
- * @access  Private (owner only)
- */
-router.delete('/:orgId/members/:memberId', authenticate, orgController.removeMember);
-
 export default router;

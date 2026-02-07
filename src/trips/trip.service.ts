@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../utils/errors';
 import { CreateTripDto, UpdateTripStatusDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
-import { TripStatus, TripEventType, Prisma } from '@prisma/client';
+import { TripStatus, TripEventType, UserRole, Prisma } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
 
@@ -9,7 +9,7 @@ const { Decimal } = Prisma;
 
 export class TripService {
   async createTrip(data: CreateTripDto, createdBy: string) {
-    // Validate user is member of the source organization
+    // 1. Validate user is member of the source org
     const sourceMembership = await prisma.orgMember.findUnique({
       where: {
         orgId_userId: {
@@ -23,64 +23,51 @@ export class TripService {
       throw new ForbiddenError('Not a member of the source organization');
     }
 
-    // Validate source and destination are different
+    // 2. Validate source ≠ destination
     if (data.sourceOrgId === data.destinationOrgId) {
       throw new ValidationError('Source and destination organizations must be different');
     }
 
-    // Validate truck belongs to source org
-    const truck = await prisma.truck.findUnique({
-      where: { id: data.truckId },
+    // 3. Find or create Truck by number
+    let truck = await prisma.truck.findUnique({
+      where: { number: data.truckNumber },
     });
-
     if (!truck) {
-      throw new NotFoundError('Truck not found');
+      truck = await prisma.truck.create({
+        data: { number: data.truckNumber, orgId: data.sourceOrgId },
+      });
     }
 
-    if (truck.orgId !== data.sourceOrgId) {
-      throw new ValidationError('Truck does not belong to source organization');
-    }
-
-    // Validate driver
-    const driver = await prisma.driverProfile.findUnique({
-      where: { id: data.driverId },
+    // 4. Find driver by phone number
+    const driverUser = await prisma.user.findUnique({
+      where: { phone: data.driverPhone },
+      include: { driverProfile: true },
     });
 
-    if (!driver) {
-      throw new NotFoundError('Driver not found');
-    }
+    let driverProfileId: string | null = null;
 
-    if (driver.orgId !== data.sourceOrgId) {
-      throw new ValidationError('Driver does not belong to source organization');
-    }
-
-    // Use SELECT FOR UPDATE to prevent concurrent assignments
-    const trip = await prisma.$transaction(async (tx) => {
-      const activeTrips = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "Trip"
-        WHERE (
-          "driverId" = ${data.driverId}
-          OR "truckId" = ${data.truckId}
-        )
-        AND "status" IN ('CREATED', 'LOADED', 'IN_TRANSIT')
-        FOR UPDATE
-      `;
-
-      if (activeTrips.length > 0) {
-        throw new ConflictError('Driver or truck already has an active trip');
+    if (driverUser) {
+      if (driverUser.role !== UserRole.DRIVER || !driverUser.driverProfile) {
+        throw new ValidationError('The phone number does not belong to a registered driver');
       }
+      driverProfileId = driverUser.driverProfile.id;
+    }
+    // If driver doesn't exist yet, trip is created without driver (CREATED status)
 
+    // 5. Create the trip
+    const trip = await prisma.$transaction(async (tx) => {
       const newTrip = await tx.trip.create({
         data: {
           sourceOrgId: data.sourceOrgId,
           destinationOrgId: data.destinationOrgId,
-          truckId: data.truckId,
-          driverId: data.driverId,
+          truckId: truck.id,
+          driverId: driverProfileId,
+          pendingDriverPhone: driverProfileId ? null : data.driverPhone,
           startPoint: data.startPoint,
           endPoint: data.endPoint,
           estimatedDistance: data.estimatedDistance,
           estimatedArrival: data.estimatedArrival ? new Date(data.estimatedArrival) : null,
-          status: TripStatus.CREATED,
+          status: driverProfileId ? TripStatus.ASSIGNED : TripStatus.CREATED,
           notes: data.notes,
         },
         include: {
@@ -101,13 +88,31 @@ export class TripService {
         },
       });
 
+      // 6. Create TripEvent
       await tx.tripEvent.create({
         data: {
           tripId: newTrip.id,
-          eventType: TripEventType.TRIP_CREATED,
-          description: `Trip created from ${data.startPoint} to ${data.endPoint}`,
+          eventType: driverProfileId ? TripEventType.ASSIGNED : TripEventType.TRIP_CREATED,
+          description: driverProfileId
+            ? `Trip created and assigned to driver ${data.driverPhone}`
+            : `Trip created, driver ${data.driverPhone} not yet registered`,
+          createdByUserId: createdBy,
         },
       });
+
+      // 7. Create DriverPayment record if payment info provided
+      if (data.driverPaymentAmount) {
+        await tx.driverPayment.create({
+          data: {
+            tripId: newTrip.id,
+            totalAmount: data.driverPaymentAmount,
+            paidBy: data.driverPaymentPaidBy || 'SOURCE',
+            splitSourceAmount: data.driverPaymentSplitSourceAmount,
+            splitDestAmount: data.driverPaymentSplitDestAmount,
+            status: 'PENDING',
+          },
+        });
+      }
 
       return newTrip;
     });

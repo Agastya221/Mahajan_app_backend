@@ -4,13 +4,18 @@ import { TripStatus, QuantityUnit } from '@prisma/client';
 export const createTripSchema = z.object({
   sourceOrgId: z.string().cuid('Invalid source organization ID'),
   destinationOrgId: z.string().cuid('Invalid destination organization ID'),
-  truckId: z.string().cuid('Invalid truck ID'),
-  driverId: z.string().cuid('Invalid driver ID'),
+  truckNumber: z.string().min(1, 'Truck number is required'),
+  driverPhone: z.string().regex(/^\+91\d{10}$/, 'Invalid Indian phone number'),
   startPoint: z.string().min(1, 'Start point is required'),
   endPoint: z.string().min(1, 'End point is required'),
   estimatedDistance: z.number().positive().optional(),
   estimatedArrival: z.string().datetime().optional(),
   notes: z.string().optional(),
+  // Driver payment config
+  driverPaymentAmount: z.number().positive().optional(),
+  driverPaymentPaidBy: z.enum(['SOURCE', 'DESTINATION', 'SPLIT']).optional(),
+  driverPaymentSplitSourceAmount: z.number().positive().optional(),
+  driverPaymentSplitDestAmount: z.number().positive().optional(),
 });
 
 export const updateTripStatusSchema = z.object({

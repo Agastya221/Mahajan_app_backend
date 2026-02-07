@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { UserRole, OrgMemberRole, TripStatus, QuantityUnit, MahajanRoleType } from '@prisma/client';
+import { UserRole, TripStatus, QuantityUnit, MahajanRoleType } from '@prisma/client';
 import prisma from '../src/config/database';
 
 async function main() {
@@ -8,41 +8,26 @@ async function main() {
   // ── 1. Create Users ──────────────────────────────────────────────
   // All users use OTP-only login (no passwords)
 
-  // YOU - Main Mahajan Owner (Source - Collector) - OTP only
-  const mahajanOwner1 = await prisma.user.upsert({
+  // YOU - Main Mahajan (Source - Collector) - OTP only
+  const mahajan1 = await prisma.user.upsert({
     where: { phone: '+916202923165' },
-    update: { name: 'Mahajan Owner' }, // Update name if exists
+    update: { name: 'Rajesh Mahajan' },
     create: {
       phone: '+916202923165',
-      name: 'Mahajan Owner',
-      role: UserRole.MAHAJAN_OWNER,
-      // No password - OTP only
+      name: 'Rajesh Mahajan',
+      role: UserRole.MAHAJAN,
       status: 'ACTIVE',
     },
   });
 
-  // Destination Mahajan Owner (Mumbai - Distributor) - OTP only
-  const mahajanOwner2 = await prisma.user.upsert({
+  // Destination Mahajan (Mumbai - Distributor) - OTP only
+  const mahajan2 = await prisma.user.upsert({
     where: { phone: '+919876543211' },
     update: {},
     create: {
       phone: '+919876543211',
       name: 'Suresh Mahajan (Mumbai)',
-      role: UserRole.MAHAJAN_OWNER,
-      // No password - OTP only
-      status: 'ACTIVE',
-    },
-  });
-
-  // Staff User - OTP only
-  const staffUser = await prisma.user.upsert({
-    where: { phone: '+919876543212' },
-    update: {},
-    create: {
-      phone: '+919876543212',
-      name: 'Amit Staff',
-      role: UserRole.MAHAJAN_STAFF,
-      // No password - OTP only
+      role: UserRole.MAHAJAN,
       status: 'ACTIVE',
     },
   });
@@ -55,7 +40,6 @@ async function main() {
       phone: '+919876543213',
       name: 'Ramu Driver',
       role: UserRole.DRIVER,
-      // No password - OTP only
       status: 'ACTIVE',
     },
   });
@@ -68,17 +52,15 @@ async function main() {
       phone: '+919876543214',
       name: 'Shyam Driver',
       role: UserRole.DRIVER,
-      // No password - OTP only
       status: 'ACTIVE',
     },
   });
 
   console.log('✅ Users created (OTP-only login)');
-  console.log(`   👤 YOU (Mahajan Owner):    ${mahajanOwner1.phone} ← Login with this`);
-  console.log(`   Mahajan Owner 2 (Dest):    ${mahajanOwner2.phone}`);
-  console.log(`   Staff:                     ${staffUser.phone}`);
-  console.log(`   Driver 1:                  ${driverUser1.phone}`);
-  console.log(`   Driver 2:                  ${driverUser2.phone}\n`);
+  console.log(`   👤 YOU (Mahajan):           ${mahajan1.phone} ← Login with this`);
+  console.log(`   Mahajan 2 (Dest):           ${mahajan2.phone}`);
+  console.log(`   Driver 1:                   ${driverUser1.phone}`);
+  console.log(`   Driver 2:                   ${driverUser2.phone}\n`);
 
   // ── 2. Create Organizations ───────────────────────────────────────
   const sourceOrg = await prisma.org.upsert({
@@ -126,34 +108,27 @@ async function main() {
   console.log(`   Destination: ${destOrg.name} (${destOrg.id})`);
   console.log(`   Third Org: ${thirdOrg.name} (${thirdOrg.id})\n`);
 
-  // ── 3. Create Org Memberships ─────────────────────────────────────
+  // ── 3. Create Org Memberships (each mahajan is sole owner of their org) ──
   await prisma.orgMember.upsert({
-    where: { orgId_userId: { orgId: sourceOrg.id, userId: mahajanOwner1.id } },
+    where: { orgId_userId: { orgId: sourceOrg.id, userId: mahajan1.id } },
     update: {},
-    create: { orgId: sourceOrg.id, userId: mahajanOwner1.id, role: OrgMemberRole.OWNER },
+    create: { orgId: sourceOrg.id, userId: mahajan1.id },
   });
 
   await prisma.orgMember.upsert({
-    where: { orgId_userId: { orgId: sourceOrg.id, userId: staffUser.id } },
+    where: { orgId_userId: { orgId: destOrg.id, userId: mahajan2.id } },
     update: {},
-    create: { orgId: sourceOrg.id, userId: staffUser.id, role: OrgMemberRole.STAFF },
-  });
-
-  await prisma.orgMember.upsert({
-    where: { orgId_userId: { orgId: destOrg.id, userId: mahajanOwner2.id } },
-    update: {},
-    create: { orgId: destOrg.id, userId: mahajanOwner2.id, role: OrgMemberRole.OWNER },
+    create: { orgId: destOrg.id, userId: mahajan2.id },
   });
 
   console.log('✅ Org memberships created\n');
 
-  // ── 4. Create Driver Profiles ──────────────────────────────────────
+  // ── 4. Create Driver Profiles (independent — no org binding) ─────
   let driverProfile1 = await prisma.driverProfile.findUnique({ where: { userId: driverUser1.id } });
   if (!driverProfile1) {
     driverProfile1 = await prisma.driverProfile.create({
       data: {
         userId: driverUser1.id,
-        orgId: sourceOrg.id,
         licenseNo: 'MH1420210012345',
         emergencyPhone: '+919876500001',
         notes: 'Experienced driver, 5+ years',
@@ -166,7 +141,6 @@ async function main() {
     driverProfile2 = await prisma.driverProfile.create({
       data: {
         userId: driverUser2.id,
-        orgId: sourceOrg.id,
         licenseNo: 'MH1420210067890',
         emergencyPhone: '+919876500002',
         notes: 'New driver, training completed',
@@ -174,32 +148,19 @@ async function main() {
     });
   }
 
-  // Add drivers as org members
-  await prisma.orgMember.upsert({
-    where: { orgId_userId: { orgId: sourceOrg.id, userId: driverUser1.id } },
-    update: {},
-    create: { orgId: sourceOrg.id, userId: driverUser1.id, role: OrgMemberRole.STAFF },
-  });
-
-  await prisma.orgMember.upsert({
-    where: { orgId_userId: { orgId: sourceOrg.id, userId: driverUser2.id } },
-    update: {},
-    create: { orgId: sourceOrg.id, userId: driverUser2.id, role: OrgMemberRole.STAFF },
-  });
-
-  console.log('✅ Driver profiles created');
+  console.log('✅ Driver profiles created (independent)');
   console.log(`   Driver 1: ${driverProfile1.id} (${driverUser1.name})`);
   console.log(`   Driver 2: ${driverProfile2.id} (${driverUser2.name})\n`);
 
   // ── 5. Create Trucks ──────────────────────────────────────────────
-  let truck1 = await prisma.truck.findFirst({ where: { orgId: sourceOrg.id, number: 'MH14AB1234' } });
+  let truck1 = await prisma.truck.findFirst({ where: { number: 'MH14AB1234' } });
   if (!truck1) {
     truck1 = await prisma.truck.create({
       data: { orgId: sourceOrg.id, number: 'MH14AB1234', type: 'MINI_TRUCK', capacity: 2000 },
     });
   }
 
-  let truck2 = await prisma.truck.findFirst({ where: { orgId: sourceOrg.id, number: 'MH14CD5678' } });
+  let truck2 = await prisma.truck.findFirst({ where: { number: 'MH14CD5678' } });
   if (!truck2) {
     truck2 = await prisma.truck.create({
       data: { orgId: sourceOrg.id, number: 'MH14CD5678', type: 'LARGE_TRUCK', capacity: 5000 },
@@ -267,7 +228,7 @@ async function main() {
         totalItems: 3,
         totalQuantity: 185, // 50 crates + 100 bags + 35 quintals
         totalAmount: 125000, // ₹1,25,000
-        createdByUserId: mahajanOwner1.id,
+        createdByUserId: mahajan1.id,
       },
     });
 
@@ -324,21 +285,21 @@ async function main() {
           eventType: 'TRIP_CREATED',
           description: 'Trip created',
           atTime: new Date(Date.now() - 3 * 60 * 60 * 1000),
-          createdByUserId: mahajanOwner1.id,
+          createdByUserId: mahajan1.id,
         },
         {
           tripId: trip1.id,
           eventType: 'ASSIGNED',
           description: `Assigned to driver ${driverUser1.name}`,
           atTime: new Date(Date.now() - 2.5 * 60 * 60 * 1000),
-          createdByUserId: mahajanOwner1.id,
+          createdByUserId: mahajan1.id,
         },
         {
           tripId: trip1.id,
           eventType: 'LOAD_COMPLETED',
           description: 'Loading completed: 50 crates tomato, 100 bags onion, 35 quintals potato',
           atTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
-          createdByUserId: mahajanOwner1.id,
+          createdByUserId: mahajan1.id,
         },
         {
           tripId: trip1.id,
@@ -379,7 +340,7 @@ async function main() {
         tripId: trip2.id,
         eventType: 'TRIP_CREATED',
         description: 'Trip created, awaiting driver assignment',
-        createdByUserId: mahajanOwner1.id,
+        createdByUserId: mahajan1.id,
       },
     });
 
@@ -413,7 +374,7 @@ async function main() {
         totalItems: 2,
         totalQuantity: 80,
         totalAmount: 240000, // ₹2,40,000
-        createdByUserId: mahajanOwner1.id,
+        createdByUserId: mahajan1.id,
       },
     });
 
@@ -482,11 +443,11 @@ async function main() {
         totalItems: 2,
         totalQuantity: 550,
         totalAmount: 27500,
-        createdByUserId: mahajanOwner1.id,
+        createdByUserId: mahajan1.id,
       },
     });
 
-    const loadItems4 = await prisma.loadItem.createMany({
+    await prisma.loadItem.createMany({
       data: [
         {
           loadCardId: loadCard4.id,
@@ -700,11 +661,10 @@ async function main() {
   console.log('  📱 Login via OTP only - no passwords needed');
   console.log('');
   console.log('  👤 Users:');
-  console.log(`    🔑 YOU (Mahajan Owner):    ${mahajanOwner1.phone} ← Your account`);
-  console.log(`    Mahajan Owner 2 (Dest):    ${mahajanOwner2.phone}`);
-  console.log(`    Staff:                     ${staffUser.phone}`);
-  console.log(`    Driver 1:                  ${driverUser1.phone}`);
-  console.log(`    Driver 2:                  ${driverUser2.phone}`);
+  console.log(`    🔑 YOU (Mahajan):           ${mahajan1.phone} ← Your account`);
+  console.log(`    Mahajan 2 (Dest):           ${mahajan2.phone}`);
+  console.log(`    Driver 1:                   ${driverUser1.phone}`);
+  console.log(`    Driver 2:                   ${driverUser2.phone}`);
   console.log('');
   console.log('  🏢 Organizations:');
   console.log(`    Source: ${sourceOrg.name}`);

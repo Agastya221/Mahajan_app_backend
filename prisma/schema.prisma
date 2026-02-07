@@ -16,14 +16,21 @@ datasource db {
 // ============================================
 
 enum UserRole {
-  MAHAJAN_OWNER
-  MAHAJAN_STAFF
+  MAHAJAN
   DRIVER
 }
 
-enum OrgMemberRole {
-  OWNER
-  STAFF
+enum DriverPaymentPaidBy {
+  SOURCE        // Source mahajan pays full amount
+  DESTINATION   // Destination mahajan pays full amount
+  SPLIT         // Split between both mahajans
+}
+
+enum DriverPaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  DISPUTED
 }
 
 enum MahajanRoleType {
@@ -128,7 +135,6 @@ model Org {
 
   members   OrgMember[]
   trucks    Truck[]
-  drivers   DriverProfile[]
 
   sourceTrips      Trip[] @relation("SourceOrgTrips")
   destinationTrips Trip[] @relation("DestinationOrgTrips")
@@ -149,6 +155,8 @@ model User {
   name         String
   phone        String    @unique
   passwordHash String?   // Optional — OTP-only users won't have a password
+  gstin        String?   @unique  // Optional GST number for mahajans
+  isVerified   Boolean   @default(false)  // True when GST is verified — shows badge
   status       String    @default("ACTIVE")
   suspendedAt  DateTime?
   bannedAt     DateTime?
@@ -195,28 +203,24 @@ model RefreshToken {
 }
 
 model OrgMember {
-  id        String        @id @default(cuid())
+  id        String   @id @default(cuid())
   orgId     String
-  org       Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      OrgMemberRole @default(STAFF)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([orgId, userId])
   @@index([userId])
-  @@index([orgId, role])
-  @@index([userId, role])
+  @@index([orgId])
 }
 
 model DriverProfile {
   id             String   @id @default(cuid())
   userId         String   @unique
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  orgId          String?
-  org            Org?     @relation(fields: [orgId], references: [id], onDelete: SetNull)
   licenseNo      String?
   emergencyPhone String?
   notes          String?
@@ -233,7 +237,7 @@ model Truck {
   id        String   @id @default(cuid())
   orgId     String
   org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  number    String
+  number    String   @unique
   type      String?
   capacity  Decimal? @db.Decimal(10, 2)
 
@@ -241,8 +245,6 @@ model Truck {
   updatedAt DateTime @updatedAt
 
   trips     Trip[]
-
-  @@unique([orgId, number])
 }
 
 // ============================================
@@ -295,6 +297,8 @@ model Trip {
   driverId         String?
   driver           DriverProfile? @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
 
+  pendingDriverPhone String?  // Phone of driver who hasn't registered yet
+
   startPoint        String?
   endPoint          String?
   startTime         DateTime?
@@ -307,16 +311,17 @@ model Trip {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  locations     TripLocation[]
-  latestLoc     TripLatestLocation?
-  loadCard      TripLoadCard?
-  receiveCard   TripReceiveCard?
-  events        TripEvent[]
-  disputes      Dispute[]
-  invoices      Invoice[]
-  payments      Payment[]
-  ledgerEntries LedgerEntry[]
-  chatThreads   ChatThread[]
+  locations      TripLocation[]
+  latestLoc      TripLatestLocation?
+  loadCard       TripLoadCard?
+  receiveCard    TripReceiveCard?
+  events         TripEvent[]
+  disputes       Dispute[]
+  invoices       Invoice[]
+  payments       Payment[]
+  ledgerEntries  LedgerEntry[]
+  chatThreads    ChatThread[]
+  driverPayment  DriverPayment?
 
   @@index([sourceOrgId, status, createdAt])
   @@index([destinationOrgId, status, createdAt])
@@ -324,6 +329,7 @@ model Trip {
   @@index([driverId, createdAt])
   @@index([driverId, status])
   @@index([truckId, status])
+  @@index([pendingDriverPhone])
 }
 
 // ============================================
@@ -841,4 +847,34 @@ model ExportLog {
   @@index([orgId, createdAt])
   @@index([createdByUserId])
   @@index([exportType, createdAt])
+}
+
+// ============================================
+// DRIVER PAYMENT MODEL
+// Flexible driver payment: source pays, dest pays, or split
+// ============================================
+
+model DriverPayment {
+  id                   String               @id @default(cuid())
+  tripId               String               @unique
+  trip                 Trip                  @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  totalAmount          Decimal              @db.Decimal(12, 2)
+  paidBy               DriverPaymentPaidBy  @default(SOURCE)
+
+  // Split amounts (only when paidBy = SPLIT)
+  splitSourceAmount    Decimal?             @db.Decimal(12, 2)
+  splitDestAmount      Decimal?             @db.Decimal(12, 2)
+
+  // Payment tracking
+  paidAmount           Decimal              @default(0) @db.Decimal(12, 2)
+  status               DriverPaymentStatus  @default(PENDING)
+  paidAt               DateTime?
+  remarks              String?
+
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  @@index([status])
+  @@index([tripId])
 }

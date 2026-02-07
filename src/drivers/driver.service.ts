@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
 import { CreateDriverDto, UpdateDriverDto } from './driver.dto';
-import { UserRole } from '@prisma/client';
+import { UserRole, Prisma } from '@prisma/client';
 
 export class DriverService {
   async createDriver(data: CreateDriverDto, createdBy: string) {
@@ -38,11 +38,10 @@ export class DriverService {
       }
     }
 
-    // Create driver profile
+    // Create driver profile (no org binding — drivers are independent)
     const driver = await prisma.driverProfile.create({
       data: {
         userId: data.userId,
-        orgId: data.orgId,
         licenseNo: data.licenseNo,
         emergencyPhone: data.emergencyPhone,
         notes: data.notes,
@@ -57,21 +56,24 @@ export class DriverService {
             role: true,
           },
         },
-        org: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
       },
     });
 
     return driver;
   }
 
-  async getDrivers(orgId?: string, page = 1, limit = 20) {
+  async getDrivers(filters: { phone?: string; page?: number; limit?: number }) {
+    const { phone, page = 1, limit = 20 } = filters;
     const safeLimit = Math.min(limit, 100);
-    const where = orgId ? { orgId } : {};
+
+    const where: Prisma.DriverProfileWhereInput = {};
+
+    // Search by phone number
+    if (phone) {
+      where.user = {
+        phone: { contains: phone },
+      };
+    }
 
     const [drivers, total] = await Promise.all([
       prisma.driverProfile.findMany({
@@ -82,12 +84,6 @@ export class DriverService {
               id: true,
               name: true,
               phone: true,
-            },
-          },
-          org: {
-            select: {
-              id: true,
-              name: true,
             },
           },
         },
@@ -118,13 +114,6 @@ export class DriverService {
             role: true,
           },
         },
-        org: {
-          select: {
-            id: true,
-            name: true,
-            city: true,
-          },
-        },
         trips: {
           where: {
             status: {
@@ -150,6 +139,20 @@ export class DriverService {
     }
 
     return driver;
+  }
+
+  async findDriverByPhone(phone: string) {
+    const user = await prisma.user.findUnique({
+      where: { phone },
+      include: {
+        driverProfile: true,
+      },
+    });
+
+    if (!user) return null;
+    if (user.role !== UserRole.DRIVER) return null;
+
+    return user.driverProfile;
   }
 
   async updateDriver(driverId: string, data: UpdateDriverDto) {
