@@ -233,16 +233,31 @@ Create a new trip.
 ### GET `/`
 Get all trips.
 - **Access**: Private
+- **Query Params**:
+  - `orgId` (string, optional): Filter trips by org. If omitted, returns trips for all user's orgs.
+  - `status` (enum, optional): Filter by trip status.
+  - `page`, `limit`: Pagination (max 100).
+- **Response**: Each trip includes:
+  - `sourceOrg` — `{ id, name, phone }`
+  - `destinationOrg` — `{ id, name, phone }`
+  - `truck`, `driver` (with user name/phone), `latestLoc`
+  - `loadCard` — with full `items[]` array (`itemName`, `quantity`, `unit`, `rate`, `grade`, etc.)
+  - `receiveCard` — with full `items[]` array
 
 ### GET `/:tripId`
-Get trip details.
+Get trip details (full detail view).
 - **Access**: Private
+- **Response**: Includes everything from list view plus:
+  - `sourceOrg` / `destinationOrg` — `{ id, name, phone, gstin, city }`
+  - `events[]` — timeline of trip events (last 20)
+  - `loadCard` — with items, attachments, and `createdByUser`
+  - `receiveCard` — with items (including `loadItem` reference), attachments, `createdByUser`, `approvedByUser`
 
 ### PATCH `/:tripId/status`
 Update trip status.
 - **Access**: Private
 - **Request Body**:
-  - `status` (enum): `SCHEDULED`, `STARTED`, `COMPLETED`, `CANCELLED`.
+  - `status` (enum): `CREATED`, `ASSIGNED`, `LOADED`, `IN_TRANSIT`, `ARRIVED`, `REACHED`, `DELIVERED`, `COMPLETED`, `CLOSED`, `CANCELLED`, `DISPUTED`.
   - `remarks` (string, optional).
 
 ### POST `/:tripId/load-card`

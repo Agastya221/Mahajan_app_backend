@@ -72,10 +72,10 @@ export class TripService {
         },
         include: {
           sourceOrg: {
-            select: { id: true, name: true, gstin: true },
+            select: { id: true, name: true, phone: true, gstin: true },
           },
           destinationOrg: {
-            select: { id: true, name: true, gstin: true },
+            select: { id: true, name: true, phone: true, gstin: true },
           },
           truck: true,
           driver: {
@@ -174,10 +174,10 @@ export class TripService {
         where,
         include: {
           sourceOrg: {
-            select: { id: true, name: true },
+            select: { id: true, name: true, phone: true },
           },
           destinationOrg: {
-            select: { id: true, name: true },
+            select: { id: true, name: true, phone: true },
           },
           truck: true,
           driver: {
@@ -185,6 +185,16 @@ export class TripService {
               user: {
                 select: { id: true, name: true, phone: true },
               },
+            },
+          },
+          loadCard: {
+            include: {
+              items: { orderBy: { sortOrder: 'asc' } },
+            },
+          },
+          receiveCard: {
+            include: {
+              items: { orderBy: { sortOrder: 'asc' } },
             },
           },
           latestLoc: true,
@@ -214,10 +224,10 @@ export class TripService {
       where: { id: tripId },
       include: {
         sourceOrg: {
-          select: { id: true, name: true, gstin: true, city: true },
+          select: { id: true, name: true, phone: true, gstin: true, city: true },
         },
         destinationOrg: {
-          select: { id: true, name: true, gstin: true, city: true },
+          select: { id: true, name: true, phone: true, gstin: true, city: true },
         },
         truck: true,
         driver: {
