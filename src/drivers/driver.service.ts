@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { redisClient } from '../config/redis';
 import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
 import { CreateDriverDto, UpdateDriverDto } from './driver.dto';
 import { UserRole, Prisma } from '@prisma/client';
@@ -59,12 +60,24 @@ export class DriverService {
       },
     });
 
+    // Invalidate driver list cache
+    // Wildcard invalidation isn't natively supported for simple keys, 
+    // so we just clear the most common full list.
+    await redisClient.del('drivers:list:all:1:20');
+
     return driver;
   }
 
   async getDrivers(filters: { phone?: string; page?: number; limit?: number }) {
     const { phone, page = 1, limit = 20 } = filters;
     const safeLimit = Math.min(limit, 100);
+
+    const cacheKey = `drivers:list:${phone || 'all'}:${page}:${safeLimit}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
 
     const where: Prisma.DriverProfileWhereInput = {};
 
@@ -96,13 +109,25 @@ export class DriverService {
       prisma.driverProfile.count({ where }),
     ]);
 
-    return {
+    const result = {
       drivers,
       pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
     };
+
+    // Cache for 30 minutes
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 1800);
+
+    return result;
   }
 
   async getDriverById(driverId: string) {
+    const cacheKey = `driver:${driverId}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
     const driver = await prisma.driverProfile.findUnique({
       where: { id: driverId },
       include: {
@@ -137,6 +162,9 @@ export class DriverService {
     if (!driver) {
       throw new NotFoundError('Driver not found');
     }
+
+    // Cache specific driver - 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(driver), 'EX', 3600);
 
     return driver;
   }
@@ -184,6 +212,13 @@ export class DriverService {
       },
     });
 
+    // Invalidate caches
+    await redisClient.del(`driver:${driverId}`);
+    // We can't easily query all list keys, so we might let them expire naturally or use a pattern delete if we had a helper.
+    // For now, let's just accept 30 min staleness on lists or implement a 'version' key strategy if critical.
+    // Simpler: just clear the main list key if no filters
+    await redisClient.del('drivers:list:all:1:20');
+
     return driver;
   }
 
@@ -205,6 +240,10 @@ export class DriverService {
     await prisma.driverProfile.delete({
       where: { id: driverId },
     });
+
+    // Invalidate caches
+    await redisClient.del(`driver:${driverId}`);
+    await redisClient.del('drivers:list:all:1:20');
 
     return { success: true };
   }

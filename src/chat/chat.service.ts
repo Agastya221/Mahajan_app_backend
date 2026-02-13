@@ -367,7 +367,7 @@ export class ChatService {
     };
   }
 
-  async sendMessage(threadId: string, data: SendMessageDto, userId: string) {
+  async sendMessage(threadId: string, data: SendMessageDto & { metadata?: any }, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
 
     // Verify attachments exist and belong to user
@@ -406,6 +406,7 @@ export class ChatService {
           senderUserId: userId,
           content: data.content || null,
           messageType: data.messageType || 'TEXT',
+          metadata: data.metadata || Prisma.JsonNull,
           replyToId: data.replyToId || null,
         },
         include: {
@@ -733,8 +734,58 @@ export class ChatService {
     return messages;
   }
 
-  // ✅ System-generated messages (for notifications, shortage alerts, etc.)
-  async sendSystemMessage(tripId: string, content: string) {
+  // ✅ New Action: Send Trip Card (Interactive Widget)
+  async sendTripCard(threadId: string, trip: any, userId: string) {
+    return this.sendMessage(threadId, {
+      content: `Trip created: ${trip.sourceOrg.name} → ${trip.destinationOrg.name}`,
+      messageType: 'TRIP_CARD',
+      metadata: {
+        tripId: trip.id,
+        status: trip.status,
+        truck: trip.truck?.number,
+        driverMethod: trip.driver ? 'REGISTERED' : 'PENDING',
+        driverName: trip.driver?.user?.name || 'Assigning...',
+        driverPhone: trip.driver?.user?.phone || trip.pendingDriverPhone,
+        items: [], // Will be populated when load card is created
+      },
+    }, userId);
+  }
+
+  // ✅ New Action: Send Payment Request (GPay Style)
+  async sendPaymentRequest(threadId: string, amount: number, note: string, userId: string) {
+    return this.sendMessage(threadId, {
+      content: `Requested ₹${amount}`,
+      messageType: 'PAYMENT_REQUEST',
+      metadata: {
+        amount,
+        note,
+        status: 'PENDING',
+      },
+    }, userId);
+  }
+
+  // ✅ New Action: Send Excel-like Data Grid
+  async sendDataGrid(threadId: string, title: string, rows: any[], userId: string) {
+    return this.sendMessage(threadId, {
+      content: `SHARED DATA: ${title}`,
+      messageType: 'DATA_GRID',
+      metadata: {
+        title,
+        rows, // Array of objects
+        columns: Object.keys(rows[0] || {}),
+      },
+    }, userId);
+  }
+
+  // ✅ System-generated messages (for notifications, shortage alerts, payment requests, etc.)
+  async sendSystemMessage(
+    tripId: string,
+    content: string,
+    metadata?: {
+      type: string;
+      [key: string]: any
+    }
+  ) {
     // Get or create thread for this trip
     let thread = await prisma.chatThread.findUnique({
       where: { tripId },
@@ -794,25 +845,100 @@ export class ChatService {
     const message = await prisma.$transaction(async (tx) => {
       const newMessage = await tx.chatMessage.create({
         data: {
-          threadId: thread.id,
+          threadId: thread!.id,
           content,
           senderUserId: null, // System message has no sender
           messageType: 'SYSTEM_MESSAGE',
+          metadata: metadata || Prisma.JsonNull,
         },
         include: {
           senderUser: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-            },
+            select: { id: true, name: true, phone: true },
           },
         },
       });
 
-      // Update thread metadata
+      // Update thread
       await tx.chatThread.update({
-        where: { id: thread.id },
+        where: { id: thread!.id },
+        data: {
+          updatedAt: new Date(),
+          lastMessageAt: new Date(),
+          lastMessageText: content,
+          unreadCount: { increment: 1 },
+        },
+      });
+
+      return newMessage;
+    });
+
+    // Broadcast
+    try {
+      await redisPublisher.publish(
+        `thread:${thread!.id}:message`,
+        JSON.stringify(message)
+      );
+    } catch (error) {
+      console.error('Failed to broadcast system message:', error);
+    }
+
+    return message;
+  }
+
+  // ✅ System message for ACCOUNT-based threads (Ledger, Payments, Invoices)
+  async sendAccountSystemMessage(
+    accountId: string,
+    content: string,
+    messageType: string = 'SYSTEM_MESSAGE',
+    metadata?: Record<string, any>,
+    senderUserId?: string,
+    paymentId?: string,
+    invoiceId?: string
+  ) {
+    // Find or create thread for this account
+    let thread = await prisma.chatThread.findUnique({
+      where: { accountId },
+    });
+
+    if (!thread) {
+      const account = await prisma.account.findUnique({
+        where: { id: accountId },
+      });
+
+      if (!account) {
+        throw new NotFoundError('Account not found');
+      }
+
+      thread = await prisma.chatThread.create({
+        data: {
+          orgId: account.ownerOrgId,
+          accountId,
+        },
+      });
+    }
+
+    // Create the message
+    const message = await prisma.$transaction(async (tx) => {
+      const newMessage = await tx.chatMessage.create({
+        data: {
+          threadId: thread!.id,
+          senderUserId: senderUserId || null,
+          content,
+          messageType: messageType as any,
+          metadata: metadata || Prisma.JsonNull,
+          paymentId: paymentId || null,
+          invoiceId: invoiceId || null,
+        },
+        include: {
+          senderUser: {
+            select: { id: true, name: true, phone: true },
+          },
+        },
+      });
+
+      // Update thread
+      await tx.chatThread.update({
+        where: { id: thread!.id },
         data: {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
@@ -824,19 +950,100 @@ export class ChatService {
       return newMessage;
     });
 
-    // Broadcast via Redis for WebSocket
+    // Broadcast via Redis
     try {
       await redisPublisher.publish(
-        `thread:${thread.id}:message`,
-        JSON.stringify({
-          ...message,
-          isSystemMessage: true,
-        })
+        `thread:${thread!.id}:message`,
+        JSON.stringify(message)
       );
     } catch (error) {
-      console.error('Failed to broadcast system message:', error);
+      console.error('Failed to broadcast account system message:', error);
     }
 
     return message;
+  }
+
+  // ✅ GPay-style: Send Payment Update Card to account chat
+  async sendPaymentUpdateCard(
+    accountId: string,
+    payment: {
+      id: string;
+      amount: number | bigint;
+      status: string;
+      mode?: string | null;
+      tag?: string | null;
+      utrNumber?: string | null;
+      remarks?: string | null;
+    },
+    action: 'REQUESTED' | 'MARKED_PAID' | 'CONFIRMED' | 'DISPUTED',
+    senderUserId?: string,
+    disputeReason?: string
+  ) {
+    const amount = Number(payment.amount);
+    const amountFormatted = `₹${amount.toLocaleString('en-IN')}`;
+
+    const statusEmoji: Record<string, string> = {
+      REQUESTED: '🔔',
+      MARKED_PAID: '💸',
+      CONFIRMED: '✅',
+      DISPUTED: '⚠️',
+    };
+
+    const statusText: Record<string, string> = {
+      REQUESTED: `${amountFormatted} payment requested`,
+      MARKED_PAID: `${amountFormatted} marked as paid${payment.mode ? ` via ${payment.mode}` : ''}`,
+      CONFIRMED: `${amountFormatted} payment confirmed`,
+      DISPUTED: `${amountFormatted} payment disputed${disputeReason ? `: ${disputeReason}` : ''}`,
+    };
+
+    return this.sendAccountSystemMessage(
+      accountId,
+      `${statusEmoji[action]} ${statusText[action]}`,
+      'PAYMENT_REQUEST',
+      {
+        paymentId: payment.id,
+        amount,
+        status: payment.status,
+        action,
+        mode: payment.mode,
+        tag: payment.tag,
+        utrNumber: payment.utrNumber,
+        remarks: payment.remarks,
+        disputeReason,
+      },
+      senderUserId,
+      payment.id
+    );
+  }
+
+  // ✅ Invoice Card: post invoice to account chat
+  async sendInvoiceCard(
+    accountId: string,
+    invoice: {
+      id: string;
+      invoiceNumber: string;
+      total: number | bigint;
+      description?: string | null;
+      dueDate?: Date | null;
+    },
+    senderUserId: string
+  ) {
+    const total = Number(invoice.total);
+    return this.sendAccountSystemMessage(
+      accountId,
+      `🧾 Invoice #${invoice.invoiceNumber} — ₹${total.toLocaleString('en-IN')}`,
+      'INVOICE_CARD',
+      {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        total,
+        description: invoice.description,
+        dueDate: invoice.dueDate,
+        status: 'OPEN',
+      },
+      senderUserId,
+      undefined,
+      invoice.id
+    );
   }
 }

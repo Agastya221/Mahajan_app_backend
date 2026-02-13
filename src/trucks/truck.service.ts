@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { redisClient } from '../config/redis';
 import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
 import { CreateTruckDto, UpdateTruckDto } from './truck.dto';
 
@@ -39,12 +40,23 @@ export class TruckService {
       },
     });
 
+    // Invalidate list caches
+    await redisClient.del(`trucks:list:${data.orgId}:1:20`); // Clear first page default
+    // Ideally clear all pages, but pattern delete is complex. TTL will handle others.
+
     return truck;
   }
 
   async getTrucks(orgId?: string, page = 1, limit = 20) {
     const safeLimit = Math.min(limit, 100);
     const where = orgId ? { orgId } : {};
+
+    const cacheKey = `trucks:list:${orgId || 'all'}:${page}:${safeLimit}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
 
     const [trucks, total] = await Promise.all([
       prisma.truck.findMany({
@@ -77,7 +89,7 @@ export class TruckService {
       prisma.truck.count({ where }),
     ]);
 
-    return {
+    const result = {
       trucks: trucks.map((truck) => ({
         ...truck,
         isActive: truck.trips.length > 0,
@@ -85,9 +97,21 @@ export class TruckService {
       })),
       pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
     };
+
+    // Cache list for 30 minutes
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 1800);
+
+    return result;
   }
 
   async getTruckById(truckId: string) {
+    const cacheKey = `truck:${truckId}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
     const truck = await prisma.truck.findUnique({
       where: { id: truckId },
       include: {
@@ -128,6 +152,9 @@ export class TruckService {
     if (!truck) {
       throw new NotFoundError('Truck not found');
     }
+
+    // Cache detail - 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(truck), 'EX', 3600);
 
     return truck;
   }
@@ -182,6 +209,10 @@ export class TruckService {
       },
     });
 
+    // Invalidate caches
+    await redisClient.del(`truck:${truckId}`);
+    await redisClient.del(`trucks:list:${updated.orgId}:1:20`);
+
     return updated;
   }
 
@@ -225,6 +256,10 @@ export class TruckService {
     await prisma.truck.delete({
       where: { id: truckId },
     });
+
+    // Invalidate caches
+    await redisClient.del(`truck:${truckId}`);
+    await redisClient.del(`trucks:list:${truck.orgId}:1:20`);
 
     return { success: true };
   }

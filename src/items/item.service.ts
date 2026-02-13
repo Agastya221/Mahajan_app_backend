@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { redisClient } from '../config/redis';
 import { CreateItemDto, UpdateItemDto, ListItemsDto } from './item.dto';
 import { NotFoundError, ConflictError } from '../utils/errors';
 import { logger } from '../utils/logger';
@@ -29,6 +30,10 @@ export class ItemService {
     });
 
     logger.info('Item created', { itemId: item.id, orgId, name: data.name });
+
+    // Invalidate list cache
+    await redisClient.del(`items:list:${orgId}`);
+
     return item;
   }
 
@@ -52,13 +57,29 @@ export class ItemService {
       }
     }
 
-    return prisma.item.update({
+    const updatedItem = await prisma.item.update({
       where: { id: itemId },
       data,
     });
+
+    // Invalidate caches
+    await Promise.all([
+      redisClient.del(`items:list:${orgId}`),
+      redisClient.del(`item:${itemId}`)
+    ]);
+
+    return updatedItem;
   }
 
   async listItems(orgId: string, filters: ListItemsDto) {
+    // Generate cache key based on filters
+    const cacheKey = `items:list:${orgId}:${JSON.stringify(filters)}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
     const where: Prisma.ItemWhereInput = {
       OR: [
         { orgId },
@@ -95,7 +116,7 @@ export class ItemService {
       prisma.item.count({ where }),
     ]);
 
-    return {
+    const result = {
       items,
       pagination: {
         page: filters.page,
@@ -104,9 +125,27 @@ export class ItemService {
         totalPages: Math.ceil(total / filters.limit),
       },
     };
+
+    // Cache for 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 3600);
+
+    return result;
   }
 
   async getItemById(itemId: string, orgId: string) {
+    const cacheKey = `item:${itemId}`;
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      const item = JSON.parse(cached);
+      // Ensure user has access (org check)
+      if (item.orgId && item.orgId !== orgId) {
+        // Fall through to DB check for security/freshness
+      } else {
+        return item;
+      }
+    }
+
     const item = await prisma.item.findFirst({
       where: {
         id: itemId,
@@ -117,6 +156,9 @@ export class ItemService {
     if (!item) {
       throw new NotFoundError('Item not found');
     }
+
+    // Cache specific item - 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(item), 'EX', 3600);
 
     return item;
   }
@@ -131,10 +173,19 @@ export class ItemService {
     }
 
     // Soft delete
-    return prisma.item.update({
+    // Soft delete
+    const result = await prisma.item.update({
       where: { id: itemId },
       data: { isActive: false },
     });
+
+    // Invalidate caches
+    await Promise.all([
+      redisClient.del(`items:list:${orgId}`),
+      redisClient.del(`item:${itemId}`)
+    ]);
+
+    return result;
   }
 
   async getCategories(orgId: string) {

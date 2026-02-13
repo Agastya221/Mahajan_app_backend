@@ -339,6 +339,30 @@ export class TripService {
       return updatedTrip;
     });
 
+    // ✅ Post TRIP_CARD status update to chat (non-blocking)
+    try {
+      const chatService = new ChatService();
+      await chatService.sendSystemMessage(
+        tripId,
+        `🚚 Trip status: ${data.status}${data.remarks ? ` — ${data.remarks}` : ''}`,
+        {
+          type: 'TRIP_STATUS_UPDATE',
+          tripId,
+          status: data.status,
+          remarks: data.remarks,
+          sourceOrg: updated.sourceOrg?.name,
+          destinationOrg: updated.destinationOrg?.name,
+          truck: updated.truck?.number,
+          driver: updated.driver?.user?.name,
+        }
+      );
+    } catch (error) {
+      logger.error('Failed to send trip status update to chat', {
+        tripId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+
     return updated;
   }
 
@@ -478,15 +502,26 @@ export class TripService {
       return newLoadCard;
     });
 
-    // Send system message to trip chat (non-blocking)
+    // ✅ Post structured load card data to chat (non-blocking)
     try {
-      const itemsSummary = data.items
-        .map((i) => `${i.itemName} ${i.quantity} ${i.unit}`)
-        .join(', ');
       const chatService = new ChatService();
+      const rows = data.items.map((i) => ({
+        Item: i.itemName,
+        Qty: `${i.quantity} ${i.unit}`,
+        Rate: i.rate ? `₹${i.rate}` : '—',
+        Amount: i.rate ? `₹${(i.quantity * i.rate).toLocaleString('en-IN')}` : '—',
+      }));
       await chatService.sendSystemMessage(
         tripId,
-        `📦 Load completed: ${data.items.length} items loaded\n${itemsSummary}`
+        `📦 Load Card: ${data.items.length} items loaded`,
+        {
+          type: 'LOAD_CARD',
+          tripId,
+          title: `Load Card — ${data.items.length} items`,
+          rows,
+          columns: ['Item', 'Qty', 'Rate', 'Amount'],
+          itemCount: data.items.length,
+        }
       );
     } catch (error) {
       logger.error('Failed to send load card chat notification', {
@@ -704,20 +739,35 @@ export class TripService {
       try {
         const shortageItems = receiveCard.itemsToCreate
           .filter((i) => i.shortage && i.shortage > 0)
-          .map(
-            (i) =>
-              `• ${i.itemName}: ${i.shortage} ${i.unit} short (${i.shortagePercent}%)`
-          )
-          .join('\n');
-
-        const alertMessage =
-          `⚠️ Shortage Alert\n\n` +
-          `Trip to ${trip.destinationOrg.name} completed with shortage:\n\n` +
-          `${shortageItems}\n\n` +
-          `Total shortage: ${receiveCard.totalShortage.toNumber()} (${receiveCard.overallShortagePercent.toFixed(2)}%)`;
+          .map((i) => {
+            // Find the corresponding loaded quantity from the load card
+            const loadedItem = i.loadItemId
+              ? trip.loadCard!.items.find((li) => li.id === i.loadItemId)
+              : null;
+            const loadedQty = loadedItem ? Number(loadedItem.quantity) : i.quantity + (i.shortage || 0);
+            return {
+              Item: i.itemName,
+              Loaded: `${loadedQty} ${i.unit}`,
+              Received: `${i.quantity} ${i.unit}`,
+              Shortage: `${i.shortage} ${i.unit}`,
+              'Shortage %': `${i.shortagePercent}%`,
+            };
+          });
 
         const chatService = new ChatService();
-        await chatService.sendSystemMessage(tripId, alertMessage);
+        await chatService.sendSystemMessage(
+          tripId,
+          `⚠️ Shortage Alert: ${receiveCard.totalShortage.toNumber()} units short (${receiveCard.overallShortagePercent.toFixed(2)}%)`,
+          {
+            type: 'SHORTAGE_ALERT',
+            tripId,
+            destinationOrg: trip.destinationOrg.name,
+            totalShortage: receiveCard.totalShortage.toNumber(),
+            shortagePercent: parseFloat(receiveCard.overallShortagePercent.toFixed(2)),
+            rows: shortageItems,
+            columns: ['Item', 'Loaded', 'Received', 'Shortage', 'Shortage %'],
+          }
+        );
 
         logger.warn('Shortage detected on delivery', {
           tripId,

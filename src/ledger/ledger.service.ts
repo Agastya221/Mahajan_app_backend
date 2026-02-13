@@ -11,6 +11,10 @@ import {
   DisputePaymentDto,
 } from './ledger.dto';
 import { LedgerDirection } from '@prisma/client';
+import { ChatService } from '../chat/chat.service';
+import { logger } from '../utils/logger';
+
+const chatService = new ChatService();
 
 export class LedgerService {
   // Account Management
@@ -295,6 +299,17 @@ export class LedgerService {
 
       return invoice;
     });
+
+    // ✅ Post INVOICE_CARD to chat (non-blocking)
+    try {
+      await chatService.sendInvoiceCard(data.accountId, result, createdBy);
+    } catch (error) {
+      logger.error('Failed to post invoice card to chat', {
+        accountId: data.accountId,
+        invoiceId: result.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return result;
   }
@@ -630,7 +645,21 @@ export class LedgerService {
       },
     });
 
-    // TODO: Send notification to counterparty org about payment request
+    // ✅ Post PAYMENT_REQUEST card to chat (non-blocking)
+    try {
+      await chatService.sendPaymentUpdateCard(
+        data.accountId,
+        payment,
+        'REQUESTED',
+        createdBy
+      );
+    } catch (error) {
+      logger.error('Failed to post payment request to chat', {
+        accountId: data.accountId,
+        paymentId: payment.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return payment;
   }
@@ -712,7 +741,20 @@ export class LedgerService {
       return updatedPayment;
     });
 
-    // TODO: Send notification to owner org about payment marked as paid
+    // ✅ Post payment marked-as-paid card to chat (non-blocking)
+    try {
+      await chatService.sendPaymentUpdateCard(
+        payment.accountId!,
+        { ...result, amount: result.amount, status: result.status! },
+        'MARKED_PAID',
+        userId
+      );
+    } catch (error) {
+      logger.error('Failed to post payment update to chat', {
+        paymentId: result.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return result;
   }
@@ -830,25 +872,25 @@ export class LedgerService {
         });
       }
 
-      // Create chat message notification
-      const thread = await tx.chatThread.findFirst({
-        where: { accountId: payment.accountId },
-      });
-
-      if (thread) {
-        await tx.chatMessage.create({
-          data: {
-            threadId: thread.id,
-            senderUserId: userId,
-            content: `Payment of ₹${(Number(payment.amount) / 100).toLocaleString('en-IN')} confirmed`,
-            messageType: 'PAYMENT_UPDATE',
-            paymentId: payment.id,
-          },
-        });
-      }
+      // Chat notification is handled after transaction (non-blocking)
 
       return { payment: updatedPayment, newBalance: updatedAccount.balance };
     });
+
+    // ✅ Post CONFIRMED payment card to chat (non-blocking, outside transaction)
+    try {
+      await chatService.sendPaymentUpdateCard(
+        payment.accountId!,
+        { ...result.payment, amount: payment.amount, status: 'CONFIRMED' },
+        'CONFIRMED',
+        userId
+      );
+    } catch (error) {
+      logger.error('Failed to post payment confirmation to chat', {
+        paymentId: result.payment.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return result;
   }
@@ -908,7 +950,21 @@ export class LedgerService {
       },
     });
 
-    // TODO: Send notification about dispute
+    // ✅ Post DISPUTED payment card to chat (non-blocking)
+    try {
+      await chatService.sendPaymentUpdateCard(
+        payment.accountId!,
+        { ...result, amount: result.amount, status: 'DISPUTED' },
+        'DISPUTED',
+        userId,
+        data.reason
+      );
+    } catch (error) {
+      logger.error('Failed to post dispute notification to chat', {
+        paymentId: result.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return result;
   }

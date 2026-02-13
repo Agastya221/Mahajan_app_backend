@@ -82,4 +82,11 @@ router.get('/unread', authenticate, chatController.getUnreadCounts);
  */
 router.get('/search', authenticate, chatController.searchMessages);
 
+/**
+ * @route   POST /api/v1/chat/threads/:threadId/action
+ * @desc    Perform rich actions (Create Trip, Request Payment, Share Data) within chat
+ * @access  Private
+ */
+router.post('/threads/:threadId/action', authenticate, chatController.performAction);
+
 export default router;

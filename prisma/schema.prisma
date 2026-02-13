@@ -123,6 +123,10 @@ enum ChatMessageType {
   PAYMENT_UPDATE
   INVOICE_UPDATE
   LOCATION
+  TRIP_CARD
+  PAYMENT_REQUEST
+  INVOICE_CARD
+  DATA_GRID
 }
 
 enum LedgerDirection {
@@ -736,6 +740,7 @@ model ChatMessage {
 
   content     String?
   messageType ChatMessageType @default(TEXT)
+  metadata    Json?           // Stores structured data for cards (trip details, payment info, excel rows)
   tag         PaymentTag?
 
   paymentId     String?

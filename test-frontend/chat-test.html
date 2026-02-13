@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Actions Test — Mahajan</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        .msg-card {
+            border-left: 4px solid;
+        }
+
+        .msg-TRIP_CARD {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .msg-PAYMENT_REQUEST {
+            border-color: #22c55e;
+            background: #f0fdf4;
+        }
+
+        .msg-INVOICE_CARD {
+            border-color: #a855f7;
+            background: #faf5ff;
+        }
+
+        .msg-DATA_GRID {
+            border-color: #f59e0b;
+            background: #fffbeb;
+        }
+
+        .msg-SYSTEM_MESSAGE {
+            border-color: #6b7280;
+            background: #f9fafb;
+        }
+
+        .msg-TEXT {
+            border-color: #e5e7eb;
+            background: #fff;
+        }
+
+        .msg-PAYMENT_UPDATE {
+            border-color: #22c55e;
+            background: #f0fdf4;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast.success {
+            background: #22c55e;
+        }
+
+        .toast.error {
+            background: #ef4444;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6 max-w-6xl">
+
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">💬 Chat Actions Test Panel</h1>
+            <p class="text-gray-500 text-sm">Test all super-app actions: Trips, Payments, Invoices, Data Grids</p>
+        </div>
+
+        <!-- Auth Bar -->
+        <div class="bg-white rounded-lg shadow p-4 mb-4">
+            <div class="flex flex-wrap gap-3 items-end">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-xs font-medium text-gray-500 mb-1">API Base URL</label>
+                    <input type="text" id="apiUrl" value="http://localhost:3000/api/v1"
+                        class="w-full px-3 py-2 border border-gray-300 rounded text-sm">
+                </div>
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Access Token</label>
+                    <input type="text" id="token" placeholder="Paste your JWT token"
+                        class="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono">
+                </div>
+                <button onclick="loadFromStorage()"
+                    class="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300">
+                    Load from Storage
+                </button>
+                <button onclick="testAuth()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                    Test Auth
+                </button>
+            </div>
+            <div id="authStatus" class="mt-2 text-xs text-gray-400"></div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid lg:grid-cols-2 gap-4">
+
+            <!-- LEFT: Thread & Actions -->
+            <div class="space-y-4">
+
+                <!-- Thread Selector -->
+                <div class="bg-white rounded-lg shadow p-4">
+                    <h2 class="font-semibold text-gray-700 mb-3">1️⃣ Select Thread</h2>
+                    <div class="flex gap-2 mb-3">
+                        <button onclick="loadThreads()"
+                            class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                            Load Threads
+                        </button>
+                        <button onclick="showCreateThread()"
+                            class="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300">
+                            + Create Thread
+                        </button>
+                    </div>
+
+                    <!-- Create Thread Form (hidden by default) -->
+                    <div id="createThreadForm" class="hidden border rounded p-3 mb-3 bg-gray-50 space-y-2">
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-500">Org ID *</label>
+                                <input type="text" id="newThreadOrgId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Account ID (optional)</label>
+                                <input type="text" id="newThreadAccountId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Trip ID (optional)</label>
+                                <input type="text" id="newThreadTripId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                        </div>
+                        <button onclick="createThread()"
+                            class="bg-green-600 text-white px-4 py-1 rounded text-sm hover:bg-green-700">
+                            Create
+                        </button>
+                    </div>
+
+                    <select id="threadSelect" onchange="onThreadSelected()"
+                        class="w-full px-3 py-2 border border-gray-300 rounded text-sm">
+                        <option value="">— Select a thread —</option>
+                    </select>
+                    <div id="threadInfo" class="mt-2 text-xs text-gray-400"></div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="bg-white rounded-lg shadow p-4">
+                    <h2 class="font-semibold text-gray-700 mb-3">2️⃣ Perform Action</h2>
+
+                    <!-- Action tabs -->
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        <button onclick="showAction('trip')"
+                            class="action-tab px-3 py-1.5 rounded text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200">🚚
+                            Trip</button>
+                        <button onclick="showAction('payment')"
+                            class="action-tab px-3 py-1.5 rounded text-xs font-medium bg-green-100 text-green-700 hover:bg-green-200">💰
+                            Payment</button>
+                        <button onclick="showAction('invoice')"
+                            class="action-tab px-3 py-1.5 rounded text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200">🧾
+                            Invoice</button>
+                        <button onclick="showAction('datagrid')"
+                            class="action-tab px-3 py-1.5 rounded text-xs font-medium bg-amber-100 text-amber-700 hover:bg-amber-200">📊
+                            Data Grid</button>
+                        <button onclick="showAction('text')"
+                            class="action-tab px-3 py-1.5 rounded text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200">💬
+                            Text</button>
+                    </div>
+
+                    <!-- TRIP FORM -->
+                    <div id="form-trip" class="action-form hidden space-y-2">
+                        <h3 class="text-sm font-semibold text-blue-700">🚚 Create Trip</h3>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-500">Source Org ID *</label>
+                                <input type="text" id="tripSourceOrgId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Dest Org ID *</label>
+                                <input type="text" id="tripDestOrgId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Truck Number *</label>
+                                <input type="text" id="tripTruck" value="MH12AB1234"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Driver Phone *</label>
+                                <input type="text" id="tripDriver" value="+919876543210"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Start Point *</label>
+                                <input type="text" id="tripStart" value="Mumbai"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">End Point *</label>
+                                <input type="text" id="tripEnd" value="Pune"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                        </div>
+                        <button onclick="doAction('CREATE_TRIP')"
+                            class="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 mt-2">
+                            Create Trip
+                        </button>
+                    </div>
+
+                    <!-- PAYMENT FORM -->
+                    <div id="form-payment" class="action-form hidden space-y-2">
+                        <h3 class="text-sm font-semibold text-green-700">💰 Payment Actions</h3>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-500">Account ID *</label>
+                                <input type="text" id="payAccountId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Amount (₹) *</label>
+                                <input type="number" id="payAmount" value="50000"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Remarks</label>
+                                <input type="text" id="payRemarks" placeholder="For freight charges"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Payment ID (for confirm/dispute)</label>
+                                <input type="text" id="payPaymentId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Mode (for mark paid)</label>
+                                <select id="payMode" class="w-full px-2 py-1 border rounded text-sm">
+                                    <option value="UPI">UPI</option>
+                                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                                    <option value="CASH">Cash</option>
+                                    <option value="CHEQUE">Cheque</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Dispute Reason</label>
+                                <input type="text" id="payDisputeReason" placeholder="Amount not received"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mt-2">
+                            <button onclick="doAction('REQUEST_PAYMENT')"
+                                class="flex-1 bg-green-600 text-white py-2 rounded text-sm hover:bg-green-700">
+                                🔔 Request
+                            </button>
+                            <button onclick="doAction('MARK_PAYMENT_PAID')"
+                                class="flex-1 bg-yellow-500 text-white py-2 rounded text-sm hover:bg-yellow-600">
+                                💸 Mark Paid
+                            </button>
+                            <button onclick="doAction('CONFIRM_PAYMENT')"
+                                class="flex-1 bg-emerald-600 text-white py-2 rounded text-sm hover:bg-emerald-700">
+                                ✅ Confirm
+                            </button>
+                            <button onclick="doAction('DISPUTE_PAYMENT')"
+                                class="flex-1 bg-red-500 text-white py-2 rounded text-sm hover:bg-red-600">
+                                ⚠️ Dispute
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- INVOICE FORM -->
+                    <div id="form-invoice" class="action-form hidden space-y-2">
+                        <h3 class="text-sm font-semibold text-purple-700">🧾 Create Invoice</h3>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-500">Account ID *</label>
+                                <input type="text" id="invAccountId" placeholder="cuid..."
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Amount (₹) *</label>
+                                <input type="number" id="invAmount" value="100000"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Invoice Number *</label>
+                                <input type="text" id="invNumber" value="INV-001"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Description</label>
+                                <input type="text" id="invDesc" value="Freight charges for Feb 2026"
+                                    class="w-full px-2 py-1 border rounded text-sm">
+                            </div>
+                        </div>
+                        <button onclick="doAction('CREATE_INVOICE')"
+                            class="w-full bg-purple-600 text-white py-2 rounded text-sm hover:bg-purple-700 mt-2">
+                            Create Invoice
+                        </button>
+                    </div>
+
+                    <!-- DATA GRID FORM -->
+                    <div id="form-datagrid" class="action-form hidden space-y-2">
+                        <h3 class="text-sm font-semibold text-amber-700">📊 Share Data / Ledger</h3>
+                        <div class="flex gap-2">
+                            <button onclick="doAction('SHARE_DATA_GRID')"
+                                class="flex-1 bg-amber-500 text-white py-2 rounded text-sm hover:bg-amber-600">
+                                📊 Share Sample Grid
+                            </button>
+                            <button onclick="doAction('SHARE_LEDGER_TIMELINE')"
+                                class="flex-1 bg-orange-500 text-white py-2 rounded text-sm hover:bg-orange-600">
+                                📒 Share Ledger Timeline
+                            </button>
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-500">Account ID (for Ledger Timeline)</label>
+                            <input type="text" id="gridAccountId" placeholder="cuid..."
+                                class="w-full px-2 py-1 border rounded text-sm">
+                        </div>
+                    </div>
+
+                    <!-- TEXT MESSAGE FORM -->
+                    <div id="form-text" class="action-form hidden space-y-2">
+                        <h3 class="text-sm font-semibold text-gray-700">💬 Send Text Message</h3>
+                        <input type="text" id="textContent" placeholder="Type a message..."
+                            class="w-full px-3 py-2 border rounded text-sm">
+                        <button onclick="sendTextMessage()"
+                            class="w-full bg-gray-700 text-white py-2 rounded text-sm hover:bg-gray-800">
+                            Send Message
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- RIGHT: Chat Messages -->
+            <div class="space-y-4">
+                <div class="bg-white rounded-lg shadow p-4">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="font-semibold text-gray-700">3️⃣ Chat Messages</h2>
+                        <button onclick="loadMessages()" class="text-xs text-blue-600 hover:underline">🔄
+                            Refresh</button>
+                    </div>
+                    <div id="messagesList" class="space-y-2 max-h-[600px] overflow-y-auto">
+                        <p class="text-gray-400 text-sm text-center py-8">Select a thread to load messages</p>
+                    </div>
+                </div>
+
+                <!-- Raw Response -->
+                <div class="bg-white rounded-lg shadow p-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="font-semibold text-gray-700 text-sm">Raw API Response</h2>
+                        <button onclick="document.getElementById('rawResponse').textContent = ''"
+                            class="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+                    </div>
+                    <pre id="rawResponse"
+                        class="bg-gray-900 text-green-400 p-3 rounded text-xs font-mono overflow-auto max-h-48">// API responses shown here</pre>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // ─── Helpers ────────────────────────────────────────
+        function getUrl() { return document.getElementById('apiUrl').value.replace(/\/$/, ''); }
+        function getToken() { return document.getElementById('token').value.trim(); }
+        function getThreadId() { return document.getElementById('threadSelect').value; }
+
+        function toast(msg, type = 'success') {
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        function showRaw(data, status) {
+            const el = document.getElementById('rawResponse');
+            el.textContent = `// Status: ${status}\n${JSON.stringify(data, null, 2)}`;
+        }
+
+        async function api(endpoint, method = 'GET', body = null) {
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            const t = getToken();
+            if (t) opts.headers['Authorization'] = `Bearer ${t}`;
+            if (body) opts.body = JSON.stringify(body);
+
+            try {
+                const res = await fetch(getUrl() + endpoint, opts);
+                const data = await res.json();
+                showRaw(data, res.status);
+                if (!res.ok) {
+                    toast(data.message || 'API Error', 'error');
+                    throw new Error(data.message);
+                }
+                return data;
+            } catch (err) {
+                if (!err.message) toast('Network error', 'error');
+                throw err;
+            }
+        }
+
+        // ─── Auth ──────────────────────────────────────────
+        function loadFromStorage() {
+            const t = localStorage.getItem('accessToken');
+            if (t) {
+                document.getElementById('token').value = t;
+                toast('Token loaded from localStorage');
+            } else {
+                toast('No token in localStorage', 'error');
+            }
+        }
+
+        async function testAuth() {
+            try {
+                const data = await api('/chat/threads?limit=1');
+                document.getElementById('authStatus').textContent = '✅ Auth OK — ' + new Date().toLocaleTimeString();
+                toast('Auth works!');
+            } catch (e) {
+                document.getElementById('authStatus').textContent = '❌ Auth failed';
+            }
+        }
+
+        // ─── Threads ───────────────────────────────────────
+        function showCreateThread() {
+            document.getElementById('createThreadForm').classList.toggle('hidden');
+        }
+
+        async function createThread() {
+            const orgId = document.getElementById('newThreadOrgId').value;
+            const accountId = document.getElementById('newThreadAccountId').value;
+            const tripId = document.getElementById('newThreadTripId').value;
+
+            if (!orgId) return toast('Org ID required', 'error');
+
+            const body = { orgId };
+            if (accountId) body.accountId = accountId;
+            if (tripId) body.tripId = tripId;
+
+            try {
+                const data = await api('/chat/threads', 'POST', body);
+                toast('Thread created: ' + data.data.id);
+                loadThreads();
+            } catch (e) { }
+        }
+
+        async function loadThreads() {
+            try {
+                const data = await api('/chat/threads');
+                const sel = document.getElementById('threadSelect');
+                sel.innerHTML = '<option value="">— Select a thread —</option>';
+                const threads = data.data || [];
+                threads.forEach(t => {
+                    const label = t.trip
+                        ? `🚚 Trip: ${t.trip.sourceOrg?.name || '?'} → ${t.trip.destinationOrg?.name || '?'}`
+                        : t.account
+                            ? `💰 Account: ${t.account.ownerOrg?.name || '?'} ↔ ${t.account.counterpartyOrg?.name || '?'}`
+                            : `💬 Thread ${t.id.slice(0, 8)}...`;
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = `${label} (${t.unreadCount || 0} unread)`;
+                    sel.appendChild(opt);
+                });
+                toast(`Loaded ${threads.length} threads`);
+            } catch (e) { }
+        }
+
+        function onThreadSelected() {
+            const id = getThreadId();
+            if (!id) return;
+            document.getElementById('threadInfo').textContent = `Thread ID: ${id}`;
+            loadMessages();
+        }
+
+        // ─── Messages ──────────────────────────────────────
+        async function loadMessages() {
+            const threadId = getThreadId();
+            if (!threadId) return toast('Select a thread first', 'error');
+
+            try {
+                const data = await api(`/chat/threads/${threadId}/messages?limit=50`);
+                const msgs = data.data?.messages || data.data || [];
+                renderMessages(msgs);
+            } catch (e) { }
+        }
+
+        function renderMessages(messages) {
+            const container = document.getElementById('messagesList');
+
+            if (!messages.length) {
+                container.innerHTML = '<p class="text-gray-400 text-sm text-center py-8">No messages yet. Use actions above to create some!</p>';
+                return;
+            }
+
+            // Reverse so newest at bottom
+            const sorted = [...messages].reverse();
+
+            container.innerHTML = sorted.map(msg => {
+                const type = msg.messageType || 'TEXT';
+                const meta = msg.metadata || {};
+                const time = new Date(msg.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                const sender = msg.senderUser?.name || 'System';
+
+                let cardHtml = '';
+
+                switch (type) {
+                    case 'TRIP_CARD':
+                        cardHtml = `
+              <div class="font-semibold text-blue-800">🚚 Trip Card</div>
+              <div class="text-sm mt-1">
+                ${meta.truck ? `Truck: <strong>${meta.truck}</strong>` : ''}
+                ${meta.status ? `<span class="ml-2 px-2 py-0.5 bg-blue-200 rounded text-xs">${meta.status}</span>` : ''}
+              </div>
+              ${meta.driverName ? `<div class="text-xs text-gray-500 mt-1">Driver: ${meta.driverName} ${meta.driverPhone || ''}</div>` : ''}
+            `;
+                        break;
+
+                    case 'PAYMENT_REQUEST':
+                    case 'PAYMENT_UPDATE':
+                        const emoji = { REQUESTED: '🔔', MARKED_PAID: '💸', CONFIRMED: '✅', DISPUTED: '⚠️' };
+                        cardHtml = `
+              <div class="font-semibold text-green-800">${emoji[meta.action] || '💰'} Payment ${meta.action || meta.status || ''}</div>
+              <div class="text-lg font-bold mt-1">₹${Number(meta.amount || 0).toLocaleString('en-IN')}</div>
+              ${meta.mode ? `<div class="text-xs text-gray-500">via ${meta.mode}</div>` : ''}
+              ${meta.utrNumber ? `<div class="text-xs text-gray-500">UTR: ${meta.utrNumber}</div>` : ''}
+              ${meta.disputeReason ? `<div class="text-xs text-red-600 mt-1">Reason: ${meta.disputeReason}</div>` : ''}
+              ${meta.paymentId ? `<div class="text-xs text-gray-400 mt-1">ID: ${meta.paymentId}</div>` : ''}
+            `;
+                        break;
+
+                    case 'INVOICE_CARD':
+                        cardHtml = `
+              <div class="font-semibold text-purple-800">🧾 Invoice #${meta.invoiceNumber || '?'}</div>
+              <div class="text-lg font-bold mt-1">₹${Number(meta.total || 0).toLocaleString('en-IN')}</div>
+              ${meta.description ? `<div class="text-xs text-gray-500">${meta.description}</div>` : ''}
+              ${meta.dueDate ? `<div class="text-xs text-gray-500">Due: ${new Date(meta.dueDate).toLocaleDateString('en-IN')}</div>` : ''}
+            `;
+                        break;
+
+                    case 'DATA_GRID':
+                        const rows = meta.rows || [];
+                        const cols = meta.columns || (rows.length ? Object.keys(rows[0]) : []);
+                        cardHtml = `
+              <div class="font-semibold text-amber-800">📊 ${meta.title || 'Data Grid'}</div>
+              ${rows.length ? `
+                <table class="w-full text-xs mt-2 border-collapse">
+                  <thead>
+                    <tr>${cols.map(c => `<th class="border px-2 py-1 bg-amber-100 text-left">${c}</th>`).join('')}</tr>
+                  </thead>
+                  <tbody>
+                    ${rows.slice(0, 10).map(r => `<tr>${cols.map(c => `<td class="border px-2 py-1">${r[c] || ''}</td>`).join('')}</tr>`).join('')}
+                  </tbody>
+                </table>
+                ${rows.length > 10 ? `<div class="text-xs text-gray-400 mt-1">...and ${rows.length - 10} more rows</div>` : ''}
+              ` : '<div class="text-xs text-gray-400">No data</div>'}
+            `;
+                        break;
+
+                    case 'SYSTEM_MESSAGE':
+                        // Check for rich metadata
+                        if (meta.type === 'LOAD_CARD' && meta.rows) {
+                            const lc = meta.columns || Object.keys(meta.rows[0] || {});
+                            cardHtml = `
+                <div class="font-semibold text-amber-800">📦 ${meta.title || 'Load Card'}</div>
+                <table class="w-full text-xs mt-2 border-collapse">
+                  <thead><tr>${lc.map(c => `<th class="border px-2 py-1 bg-amber-100 text-left">${c}</th>`).join('')}</tr></thead>
+                  <tbody>${meta.rows.map(r => `<tr>${lc.map(c => `<td class="border px-2 py-1">${r[c] || ''}</td>`).join('')}</tr>`).join('')}</tbody>
+                </table>
+              `;
+                        } else if (meta.type === 'SHORTAGE_ALERT' && meta.rows) {
+                            const sc = meta.columns || Object.keys(meta.rows[0] || {});
+                            cardHtml = `
+                <div class="font-semibold text-red-700">⚠️ Shortage Alert</div>
+                <div class="text-xs text-red-600">Total shortage: ${meta.totalShortage} (${meta.shortagePercent}%)</div>
+                <table class="w-full text-xs mt-2 border-collapse">
+                  <thead><tr>${sc.map(c => `<th class="border px-2 py-1 bg-red-100 text-left">${c}</th>`).join('')}</tr></thead>
+                  <tbody>${meta.rows.map(r => `<tr>${sc.map(c => `<td class="border px-2 py-1">${r[c] || ''}</td>`).join('')}</tr>`).join('')}</tbody>
+                </table>
+              `;
+                        } else if (meta.type === 'TRIP_STATUS_UPDATE') {
+                            cardHtml = `
+                <div class="font-semibold text-blue-700">🚚 Trip Status Update</div>
+                <div class="text-sm"><span class="px-2 py-0.5 bg-blue-200 rounded text-xs">${meta.status}</span></div>
+                ${meta.sourceOrg ? `<div class="text-xs text-gray-500 mt-1">${meta.sourceOrg} → ${meta.destinationOrg}</div>` : ''}
+                ${meta.remarks ? `<div class="text-xs text-gray-500">${meta.remarks}</div>` : ''}
+              `;
+                        } else {
+                            cardHtml = `<div class="text-gray-600 text-sm">${msg.content || ''}</div>`;
+                        }
+                        break;
+
+                    default:
+                        cardHtml = `<div class="text-gray-800">${msg.content || ''}</div>`;
+                }
+
+                return `
+          <div class="msg-card msg-${type} rounded p-3 fade-in">
+            <div class="flex justify-between items-start mb-1">
+              <span class="text-xs font-medium text-gray-500">${sender}</span>
+              <span class="text-xs text-gray-400">${time}</span>
+            </div>
+            ${msg.content && type !== 'TEXT' && type !== 'SYSTEM_MESSAGE' ? `<div class="text-xs text-gray-500 mb-1">${msg.content}</div>` : ''}
+            ${cardHtml}
+          </div>
+        `;
+            }).join('');
+
+            // Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // ─── Send Text Message ─────────────────────────────
+        async function sendTextMessage() {
+            const threadId = getThreadId();
+            if (!threadId) return toast('Select a thread first', 'error');
+            const content = document.getElementById('textContent').value.trim();
+            if (!content) return toast('Type a message', 'error');
+
+            try {
+                await api(`/chat/threads/${threadId}/messages`, 'POST', { content, messageType: 'TEXT' });
+                document.getElementById('textContent').value = '';
+                toast('Message sent');
+                loadMessages();
+            } catch (e) { }
+        }
+
+        // ─── Perform Action ────────────────────────────────
+        async function doAction(actionType) {
+            const threadId = getThreadId();
+            if (!threadId) return toast('Select a thread first', 'error');
+
+            let payload = {};
+
+            switch (actionType) {
+                case 'CREATE_TRIP':
+                    payload = {
+                        sourceOrgId: document.getElementById('tripSourceOrgId').value,
+                        destinationOrgId: document.getElementById('tripDestOrgId').value,
+                        truckNumber: document.getElementById('tripTruck').value,
+                        driverPhone: document.getElementById('tripDriver').value,
+                        startPoint: document.getElementById('tripStart').value,
+                        endPoint: document.getElementById('tripEnd').value,
+                    };
+                    if (!payload.sourceOrgId || !payload.destinationOrgId) return toast('Source & Dest Org IDs required', 'error');
+                    break;
+
+                case 'REQUEST_PAYMENT':
+                    payload = {
+                        accountId: document.getElementById('payAccountId').value,
+                        amount: Number(document.getElementById('payAmount').value),
+                        remarks: document.getElementById('payRemarks').value || undefined,
+                    };
+                    if (!payload.accountId || !payload.amount) return toast('Account ID & Amount required', 'error');
+                    break;
+
+                case 'MARK_PAYMENT_PAID':
+                    payload = {
+                        paymentId: document.getElementById('payPaymentId').value,
+                        mode: document.getElementById('payMode').value,
+                    };
+                    if (!payload.paymentId) return toast('Payment ID required', 'error');
+                    break;
+
+                case 'CONFIRM_PAYMENT':
+                    payload = {
+                        paymentId: document.getElementById('payPaymentId').value,
+                    };
+                    if (!payload.paymentId) return toast('Payment ID required', 'error');
+                    break;
+
+                case 'DISPUTE_PAYMENT':
+                    payload = {
+                        paymentId: document.getElementById('payPaymentId').value,
+                        reason: document.getElementById('payDisputeReason').value || 'Amount not received',
+                    };
+                    if (!payload.paymentId) return toast('Payment ID required', 'error');
+                    break;
+
+                case 'CREATE_INVOICE':
+                    payload = {
+                        accountId: document.getElementById('invAccountId').value,
+                        amount: Number(document.getElementById('invAmount').value),
+                        invoiceNumber: document.getElementById('invNumber').value,
+                        description: document.getElementById('invDesc').value || undefined,
+                    };
+                    if (!payload.accountId || !payload.amount || !payload.invoiceNumber) return toast('All invoice fields required', 'error');
+                    break;
+
+                case 'SHARE_DATA_GRID':
+                    payload = {
+                        title: 'Sample Product List',
+                        rows: [
+                            { Product: 'Tomatoes', Qty: '500 KG', Rate: '₹40', Amount: '₹20,000' },
+                            { Product: 'Onions', Qty: '300 KG', Rate: '₹30', Amount: '₹9,000' },
+                            { Product: 'Potatoes', Qty: '200 KG', Rate: '₹25', Amount: '₹5,000' },
+                        ],
+                    };
+                    break;
+
+                case 'SHARE_LEDGER_TIMELINE':
+                    payload = {
+                        accountId: document.getElementById('gridAccountId').value,
+                    };
+                    if (!payload.accountId) return toast('Account ID required for ledger timeline', 'error');
+                    break;
+            }
+
+            try {
+                const data = await api(`/chat/threads/${threadId}/action`, 'POST', { actionType, payload });
+                toast(`${actionType} executed!`);
+
+                // If payment was created, show its ID so user can confirm/dispute
+                if (actionType === 'REQUEST_PAYMENT' && data.data?.id) {
+                    document.getElementById('payPaymentId').value = data.data.id;
+                    toast(`Payment ID: ${data.data.id} — auto-filled!`);
+                }
+
+                // Reload messages after a short delay (allow async chat messages to be created)
+                setTimeout(loadMessages, 500);
+            } catch (e) { }
+        }
+
+        // ─── Show/Hide Action Forms ────────────────────────
+        function showAction(name) {
+            document.querySelectorAll('.action-form').forEach(f => f.classList.add('hidden'));
+            const form = document.getElementById('form-' + name);
+            if (form) form.classList.remove('hidden');
+        }
+
+        // Show Trip form by default
+        showAction('trip');
+
+        // Auto-load token if present
+        if (localStorage.getItem('accessToken')) {
+            document.getElementById('token').value = localStorage.getItem('accessToken');
+            document.getElementById('authStatus').textContent = '🔑 Token loaded from localStorage';
+        }
+    </script>
+</body>
+
+</html>

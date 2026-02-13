@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { OrgService } from './org.service';
 import { createOrgSchema, updateOrgSchema } from './org.dto';
 import { asyncHandler } from '../middleware/error.middleware';
@@ -33,6 +33,25 @@ export class OrgController {
     res.json({
       success: true,
       data: org,
+    });
+  });
+
+  searchOrgs = asyncHandler(async (req: Request, res: Response) => {
+    const { query } = req.query as { query: string };
+
+    if (!query || query.length < 2) {
+      res.json({
+        success: true,
+        data: [],
+      });
+      return;
+    }
+
+    const orgs = await orgService.searchOrgs(query);
+
+    res.json({
+      success: true,
+      data: orgs,
     });
   });
 

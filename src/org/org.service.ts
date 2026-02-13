@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { redisClient } from '../config/redis';
 import { NotFoundError, ForbiddenError } from '../utils/errors';
 import { CreateOrgDto, UpdateOrgDto } from './org.dto';
 
@@ -144,4 +145,68 @@ export class OrgService {
 
     return { success: true };
   }
+
+  async searchOrgs(query: string) {
+    const cacheKey = `search:org:${query.toLowerCase().trim()}`;
+    const cachedResult = await redisClient.get(cacheKey);
+
+    if (cachedResult) {
+      return JSON.parse(cachedResult);
+    }
+
+    // Search by Org Name OR Org Phone OR Member Name OR Member Phone
+    const orgs = await prisma.org.findMany({
+      where: {
+        OR: [
+          { name: { contains: query, mode: 'insensitive' } },
+          { phone: { contains: query, mode: 'insensitive' } },
+          {
+            members: {
+              some: {
+                user: {
+                  OR: [
+                    { name: { contains: query, mode: 'insensitive' } },
+                    { phone: { contains: query, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+      take: 10, // Limit results for autocomplete
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        phone: true,
+        members: {
+          select: {
+            user: {
+              select: {
+                name: true,
+                phone: true,
+              },
+            },
+          },
+          take: 1, // Get primary owner details
+        },
+      },
+    });
+
+    const result = orgs.map((org) => ({
+      id: org.id,
+      name: org.name,
+      city: org.city,
+      phone: org.phone || org.members[0]?.user.phone,
+      ownerName: org.members[0]?.user.name,
+      displayLabel: `${org.name} (${org.city || 'No City'}) - ${org.members[0]?.user.name}`,
+    }));
+
+    // Cache for 5 minutes (300 seconds)
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 300);
+
+    return result;
+  }
 }
+
