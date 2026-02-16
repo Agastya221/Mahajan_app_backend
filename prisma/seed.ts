@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { UserRole, TripStatus, QuantityUnit, MahajanRoleType } from '@prisma/client';
+import { UserRole, TripStatus, QuantityUnit, MahajanRoleType, ChatMessageType } from '@prisma/client';
 import prisma from '../src/config/database';
 
 async function main() {
@@ -8,25 +8,25 @@ async function main() {
   // ── 1. Create Users ──────────────────────────────────────────────
   // All users use OTP-only login (no passwords)
 
-  // YOU - Main Mahajan (Source - Collector) - OTP only
+  // Agastya Mahajan (Source - Collector) - OTP only
   const mahajan1 = await prisma.user.upsert({
     where: { phone: '+916202923165' },
-    update: { name: 'Rajesh Mahajan' },
+    update: { name: 'Agastya Mahajan' },
     create: {
       phone: '+916202923165',
-      name: 'Rajesh Mahajan',
+      name: 'Agastya Mahajan',
       role: UserRole.MAHAJAN,
       status: 'ACTIVE',
     },
   });
 
-  // Destination Mahajan (Mumbai - Distributor) - OTP only
+  // Javed Mahajan (Destination - Distributor) - OTP only
   const mahajan2 = await prisma.user.upsert({
-    where: { phone: '+919876543211' },
-    update: {},
+    where: { phone: '+919006412619' },
+    update: { name: 'Javed Mahajan' },
     create: {
-      phone: '+919876543211',
-      name: 'Suresh Mahajan (Mumbai)',
+      phone: '+919006412619',
+      name: 'Javed Mahajan',
       role: UserRole.MAHAJAN,
       status: 'ACTIVE',
     },
@@ -57,19 +57,19 @@ async function main() {
   });
 
   console.log('✅ Users created (OTP-only login)');
-  console.log(`   👤 YOU (Mahajan):           ${mahajan1.phone} ← Login with this`);
-  console.log(`   Mahajan 2 (Dest):           ${mahajan2.phone}`);
+  console.log(`   👤 Agastya Mahajan:         ${mahajan1.phone}`);
+  console.log(`   👤 Javed Mahajan:           ${mahajan2.phone}`);
   console.log(`   Driver 1:                   ${driverUser1.phone}`);
   console.log(`   Driver 2:                   ${driverUser2.phone}\n`);
 
   // ── 2. Create Organizations ───────────────────────────────────────
   const sourceOrg = await prisma.org.upsert({
     where: { gstin: '27AABCU9603R1ZM' },
-    update: {},
+    update: { name: 'Agastya Enterprises (Nashik)' },
     create: {
-      name: 'Rajesh Vegetables (Nashik)',
+      name: 'Agastya Enterprises (Nashik)',
       city: 'Nashik',
-      phone: '+919876543210',
+      phone: '+916202923165',
       address: 'Market Yard, Nashik, Maharashtra',
       gstin: '27AABCU9603R1ZM',
       roleType: MahajanRoleType.SOURCE_COLLECTOR,
@@ -78,11 +78,11 @@ async function main() {
 
   const destOrg = await prisma.org.upsert({
     where: { gstin: '27AABCU9603R2ZN' },
-    update: {},
+    update: { name: 'Javed Traders (Mumbai)' },
     create: {
-      name: 'Suresh Vegetables (Mumbai)',
+      name: 'Javed Traders (Mumbai)',
       city: 'Mumbai',
-      phone: '+919876543211',
+      phone: '+919006412619',
       address: 'APMC Market, Navi Mumbai, Maharashtra',
       gstin: '27AABCU9603R2ZN',
       roleType: MahajanRoleType.DESTINATION_DISTRIBUTOR,
@@ -122,6 +122,12 @@ async function main() {
   });
 
   console.log('✅ Org memberships created\n');
+
+  // ... (Driver Profiles, Trucks, Items remain similar but I'll update summary logs later) ...
+  // Skipping unrelated parts for brevity in this replace block if possible, but replace_file requires contiguous blocks.
+  // I'll assume the middle parts are fine and jump to the chat insertion point.
+
+
 
   // ── 4. Create Driver Profiles (independent — no org binding) ─────
   let driverProfile1 = await prisma.driverProfile.findUnique({ where: { userId: driverUser1.id } });
@@ -315,6 +321,59 @@ async function main() {
     console.log(`   Route: Nashik → Mumbai`);
     console.log(`   Items: Tomato (50 crates), Onion (100 bags), Potato (35 quintals)`);
     console.log(`   Total Value: ₹1,25,000\n`);
+
+    // ── 7.5 Create Chat Thread & Messages ─────────────────────────────
+    let thread = await prisma.chatThread.findFirst({
+      where: { orgId: sourceOrg.id, tripId: trip1.id },
+    });
+
+    if (!thread) {
+      thread = await prisma.chatThread.create({
+        data: {
+          orgId: sourceOrg.id,
+          tripId: trip1.id,
+          title: `Trip #${trip1.id.substring(0, 6)}`,
+          // Removed participants as it's not a direct relation on ChatThread
+        },
+      });
+
+      // Add messages
+      await prisma.chatMessage.createMany({
+        data: [
+          {
+            threadId: thread.id,
+            senderUserId: mahajan1.id, // Agastya
+            messageType: ChatMessageType.TEXT,
+            content: 'Truck has left Nashik. Driver Ramu is carrying the goods.',
+            createdAt: new Date(Date.now() - 1.5 * 60 * 60 * 1000),
+          },
+          {
+            threadId: thread.id,
+            senderUserId: mahajan2.id, // Javed
+            messageType: ChatMessageType.TEXT,
+            content: 'Okay Agastya bhai. I will inform my team to be ready for unloading.',
+            createdAt: new Date(Date.now() - 1.4 * 60 * 60 * 1000),
+          },
+          {
+            threadId: thread.id,
+            senderUserId: mahajan1.id, // Agastya (Simulated Audio)
+            messageType: ChatMessageType.AUDIO,
+            content: '',
+            metadata: { duration: 15, key: 'mock-audio-key.m4a' }, // Mock metadata
+            createdAt: new Date(Date.now() - 1.2 * 60 * 60 * 1000),
+          },
+          {
+            threadId: thread.id,
+            senderUserId: mahajan2.id, // Javed
+            messageType: ChatMessageType.TEXT,
+            content: 'Received your voice note. Got it.',
+            createdAt: new Date(Date.now() - 1.1 * 60 * 60 * 1000),
+          }
+        ],
+      });
+
+      console.log('✅ Chat thread & messages created for Trip 1');
+    }
   }
 
   // ── 8. Create Trip 2: CREATED (Pending Assignment - Fruits) ──────
@@ -661,8 +720,8 @@ async function main() {
   console.log('  📱 Login via OTP only - no passwords needed');
   console.log('');
   console.log('  👤 Users:');
-  console.log(`    🔑 YOU (Mahajan):           ${mahajan1.phone} ← Your account`);
-  console.log(`    Mahajan 2 (Dest):           ${mahajan2.phone}`);
+  console.log(`    🔑 Agastya (Loader):        ${mahajan1.phone} ← Your account`);
+  console.log(`    Javed (Receiver):           ${mahajan2.phone}`);
   console.log(`    Driver 1:                   ${driverUser1.phone}`);
   console.log(`    Driver 2:                   ${driverUser2.phone}`);
   console.log('');
@@ -675,6 +734,9 @@ async function main() {
   console.log(`    CREATED:    ${trip2?.id} (Awaiting assignment)`);
   console.log(`    LOADED:     ${trip3?.id} (Apples, Grapes - Ready to depart)`);
   console.log(`    DELIVERED:  ${trip4?.id} (Cabbage, Spinach - Pending confirmation)`);
+  console.log('');
+  console.log('  💬 Chat Threads:');
+  console.log(`    Trip 1: Messages seeded (inc. Audio)`);
   console.log('');
   console.log('  📍 Mock Location Simulator:');
   console.log(`    Start mock simulation: POST /api/dev/mock-location/start/${trip1?.id}`);
