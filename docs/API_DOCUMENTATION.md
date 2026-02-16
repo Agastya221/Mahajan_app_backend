@@ -1,8 +1,8 @@
 # Mahajan Network Platform — API Documentation
 
 **Base URL:** `http://localhost:3000/api/v1`  
-**Version:** 2.0  
-**Last Updated:** 2026-02-13
+**Version:** 2.1  
+**Last Updated:** 2026-02-16
 
 ---
 
@@ -621,6 +621,7 @@ POST /trips
 {
   "sourceOrgId": "...",
   "destinationOrgId": "...",
+  "receiverPhone": "+919876543210",
   "truckId": "...",
   "driverId": "...",
   "pendingDriverPhone": "+919876543210",
@@ -629,6 +630,25 @@ POST /trips
   "notes": "Handle with care"
 }
 ```
+
+**Notes:**
+- Provide either `destinationOrgId` OR `receiverPhone` (not both required)
+- If `receiverPhone` is used and no organization exists for that phone, a placeholder org is created automatically
+- If `driverId` is not provided but `pendingDriverPhone` is, the trip is created with a guest driver
+
+**Guest User Fields in Response:**
+```json
+{
+  "driverRegistered": true,
+  "receiverRegistered": false,
+  "trackingEnabled": true,
+  "paymentEnabled": false,
+  "pendingReceiverPhone": "+919876543210"
+}
+```
+- `trackingEnabled`: `false` if driver is a guest (not registered)
+- `paymentEnabled`: `false` if receiver is a guest (not registered)
+- These flags become `true` automatically when the guest user registers
 
 ---
 
@@ -1124,11 +1144,59 @@ POST /chat/threads/:threadId/messages
 
 **Auth:** Private
 
-**Request Body:**
+**Request Body (Text):**
 ```json
 {
   "content": "Payment sent via UPI",
   "messageType": "TEXT"
+}
+```
+
+**Request Body (Audio/Voice Message):**
+```json
+{
+  "messageType": "AUDIO",
+  "attachmentIds": ["file_id_from_upload"]
+}
+```
+
+**Request Body (Image):**
+```json
+{
+  "messageType": "IMAGE",
+  "attachmentIds": ["file_id_from_upload"]
+}
+```
+
+**Supported `messageType` values:**
+| Type | Requires | Preview Text |
+|------|----------|--------------|
+| `TEXT` | `content` | First 100 chars |
+| `IMAGE` | `attachmentIds` | 📷 Photo |
+| `PDF` | `attachmentIds` | 📄 Document |
+| `FILE` | `attachmentIds` | 📎 File |
+| `AUDIO` | `attachmentIds` | 🎤 Voice message |
+
+**Response (includes attachments for playback):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "...",
+    "messageType": "AUDIO",
+    "content": null,
+    "senderUser": { "id": "...", "name": "..." },
+    "attachments": [
+      {
+        "id": "...",
+        "url": "https://s3.amazonaws.com/.../voice.mp3",
+        "fileName": "voice.mp3",
+        "mimeType": "audio/mpeg",
+        "sizeBytes": 733645,
+        "type": "CHAT_AUDIO"
+      }
+    ]
+  }
 }
 ```
 
@@ -1362,6 +1430,13 @@ POST /files/upload-compressed
 - `purpose` (optional): LOAD_CARD | RECEIVE_CARD | INVOICE | CHAT_ATTACHMENT
 - `skipCompression` (optional): Set to 'true' to skip compression
 
+**Supported MIME types:**
+- Images: `image/jpeg`, `image/png`, `image/webp`
+- Documents: `application/pdf`, `application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- Audio: `audio/aac`, `audio/mp4`, `audio/mpeg`, `audio/ogg`, `audio/webm`, `audio/wav`, `audio/x-m4a`
+
+**⚠️ For audio uploads:** Always set `skipCompression: "true"`. Compression is only applied to images.
+
 **Response:**
 ```json
 {
@@ -1369,12 +1444,20 @@ POST /files/upload-compressed
   "data": {
     "fileId": "...",
     "url": "https://...",
-    "originalSize": 2048000,
-    "compressedSize": 307200,
-    "compressionRatio": "85%"
+    "mimeType": "audio/mpeg",
+    "originalSize": 733645,
+    "compressedSize": 733645,
+    "compressionRatio": "0.0%"
   }
 }
 ```
+
+**Attachment types auto-detected:**
+| MIME type | Purpose | Mapped to |
+|-----------|---------|----------|
+| `image/*` | `CHAT_ATTACHMENT` | `CHAT_IMAGE` |
+| `audio/*` | `CHAT_ATTACHMENT` | `CHAT_AUDIO` |
+| Other | `CHAT_ATTACHMENT` | `CHAT_DOCUMENT` |
 
 ---
 

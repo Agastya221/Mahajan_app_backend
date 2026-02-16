@@ -398,6 +398,7 @@ export class ChatService {
     if (data.messageType === 'IMAGE') previewText = '📷 Photo';
     else if (data.messageType === 'PDF') previewText = '📄 Document';
     else if (data.messageType === 'FILE') previewText = '📎 File';
+    else if (data.messageType === 'AUDIO') previewText = '🎤 Voice message';
 
     const message = await prisma.$transaction(async (tx) => {
       const newMessage = await tx.chatMessage.create({
