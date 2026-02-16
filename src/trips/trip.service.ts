@@ -23,12 +23,56 @@ export class TripService {
       throw new ForbiddenError('Not a member of the source organization');
     }
 
-    // 2. Validate source ≠ destination
-    if (data.sourceOrgId === data.destinationOrgId) {
+    // 2. Resolve destination org (registered receiver or guest)
+    let destinationOrgId: string;
+    let isReceiverRegistered = true;
+    let pendingReceiverPhone: string | null = null;
+
+    if (data.destinationOrgId) {
+      // Explicit org ID provided — verify it exists
+      const destOrg = await prisma.org.findUnique({
+        where: { id: data.destinationOrgId },
+      });
+      if (!destOrg) {
+        throw new NotFoundError('Destination organization not found');
+      }
+      destinationOrgId = data.destinationOrgId;
+    } else if (data.receiverPhone) {
+      // ✅ Guest receiver flow: look up org by phone
+      const existingOrg = await prisma.org.findFirst({
+        where: { phone: data.receiverPhone },
+      });
+
+      if (existingOrg) {
+        // Org exists with this phone — receiver is registered
+        destinationOrgId = existingOrg.id;
+      } else {
+        // ✅ No org found — create placeholder org for guest receiver
+        const placeholderOrg = await prisma.org.create({
+          data: {
+            name: `Pending (${data.receiverPhone})`,
+            phone: data.receiverPhone,
+          },
+        });
+        destinationOrgId = placeholderOrg.id;
+        isReceiverRegistered = false;
+        pendingReceiverPhone = data.receiverPhone;
+
+        logger.info('Created placeholder org for guest receiver', {
+          phone: data.receiverPhone,
+          placeholderOrgId: placeholderOrg.id,
+        });
+      }
+    } else {
+      throw new ValidationError('Either destinationOrgId or receiverPhone is required');
+    }
+
+    // 3. Validate source ≠ destination
+    if (data.sourceOrgId === destinationOrgId) {
       throw new ValidationError('Source and destination organizations must be different');
     }
 
-    // 3. Find or create Truck by number
+    // 4. Find or create Truck by number
     let truck = await prisma.truck.findUnique({
       where: { number: data.truckNumber },
     });
@@ -38,31 +82,42 @@ export class TripService {
       });
     }
 
-    // 4. Find driver by phone number
+    // 5. Find driver by phone number
     const driverUser = await prisma.user.findUnique({
       where: { phone: data.driverPhone },
       include: { driverProfile: true },
     });
 
     let driverProfileId: string | null = null;
+    let isDriverRegistered = false;
 
     if (driverUser) {
       if (driverUser.role !== UserRole.DRIVER || !driverUser.driverProfile) {
         throw new ValidationError('The phone number does not belong to a registered driver');
       }
       driverProfileId = driverUser.driverProfile.id;
+      isDriverRegistered = true;
     }
     // If driver doesn't exist yet, trip is created without driver (CREATED status)
 
-    // 5. Create the trip
+    // 6. Compute feature flags
+    const trackingEnabled = isDriverRegistered;     // Tracking requires registered driver with app
+    const paymentEnabled = isReceiverRegistered;    // Payments require registered receiver (dest org)
+
+    // 7. Create the trip
     const trip = await prisma.$transaction(async (tx) => {
       const newTrip = await tx.trip.create({
         data: {
           sourceOrgId: data.sourceOrgId,
-          destinationOrgId: data.destinationOrgId,
+          destinationOrgId,
           truckId: truck.id,
           driverId: driverProfileId,
           pendingDriverPhone: driverProfileId ? null : data.driverPhone,
+          pendingReceiverPhone,
+          driverRegistered: isDriverRegistered,
+          receiverRegistered: isReceiverRegistered,
+          trackingEnabled,
+          paymentEnabled,
           startPoint: data.startPoint,
           endPoint: data.endPoint,
           estimatedDistance: data.estimatedDistance,
@@ -88,19 +143,23 @@ export class TripService {
         },
       });
 
-      // 6. Create TripEvent
+      // 8. Create TripEvent
+      const guestParts: string[] = [];
+      if (!isDriverRegistered) guestParts.push(`driver ${data.driverPhone} not yet registered`);
+      if (!isReceiverRegistered) guestParts.push(`receiver ${data.receiverPhone} not yet registered`);
+
       await tx.tripEvent.create({
         data: {
           tripId: newTrip.id,
           eventType: driverProfileId ? TripEventType.ASSIGNED : TripEventType.TRIP_CREATED,
-          description: driverProfileId
-            ? `Trip created and assigned to driver ${data.driverPhone}`
-            : `Trip created, driver ${data.driverPhone} not yet registered`,
+          description: guestParts.length > 0
+            ? `Trip created — ${guestParts.join(', ')}`
+            : `Trip created and assigned to driver ${data.driverPhone}`,
           createdByUserId: createdBy,
         },
       });
 
-      // 7. Create DriverPayment record if payment info provided
+      // 9. Create DriverPayment record if payment info provided AND driver is registered
       if (data.driverPaymentAmount) {
         await tx.driverPayment.create({
           data: {

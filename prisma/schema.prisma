@@ -111,6 +111,7 @@ enum AttachmentType {
   RECEIPT
   CHAT_IMAGE
   CHAT_DOCUMENT
+  CHAT_AUDIO
   OTHER
 }
 
@@ -119,6 +120,7 @@ enum ChatMessageType {
   IMAGE
   PDF
   FILE
+  AUDIO
   SYSTEM_MESSAGE
   PAYMENT_UPDATE
   INVOICE_UPDATE
@@ -313,7 +315,16 @@ model Trip {
   driverId         String?
   driver           DriverProfile? @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
 
-  pendingDriverPhone String?  // Phone of driver who hasn't registered yet
+  pendingDriverPhone   String?  // Phone of driver who hasn't registered yet
+  pendingReceiverPhone String?  // Phone of receiver (dest org contact) who hasn't registered yet
+
+  // ✅ Guest user registration status
+  driverRegistered     Boolean @default(true)
+  receiverRegistered   Boolean @default(true)
+
+  // ✅ Feature flags (computed from registration status at creation, updated on linking)
+  trackingEnabled      Boolean @default(true)   // Requires registered driver
+  paymentEnabled       Boolean @default(true)   // Requires registered receiver (dest org)
 
   startPoint        String?
   endPoint          String?
@@ -346,6 +357,7 @@ model Trip {
   @@index([driverId, status])
   @@index([truckId, status])
   @@index([pendingDriverPhone])
+  @@index([pendingReceiverPhone])
 }
 
 // ============================================

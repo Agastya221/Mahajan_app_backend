@@ -3,7 +3,9 @@ import { TripStatus, QuantityUnit } from '@prisma/client';
 
 export const createTripSchema = z.object({
   sourceOrgId: z.string().cuid('Invalid source organization ID'),
-  destinationOrgId: z.string().cuid('Invalid destination organization ID'),
+  destinationOrgId: z.string().cuid('Invalid destination organization ID').optional(),
+  // ✅ Guest receiver: provide phone if receiver is not registered
+  receiverPhone: z.string().regex(/^\+91\d{10}$/, 'Invalid Indian phone number').optional(),
   truckNumber: z.string().min(1, 'Truck number is required'),
   driverPhone: z.string().regex(/^\+91\d{10}$/, 'Invalid Indian phone number'),
   startPoint: z.string().min(1, 'Start point is required'),
@@ -16,7 +18,10 @@ export const createTripSchema = z.object({
   driverPaymentPaidBy: z.enum(['SOURCE', 'DESTINATION', 'SPLIT']).optional(),
   driverPaymentSplitSourceAmount: z.number().positive().optional(),
   driverPaymentSplitDestAmount: z.number().positive().optional(),
-});
+}).refine(
+  (data) => data.destinationOrgId || data.receiverPhone,
+  { message: 'Either destinationOrgId or receiverPhone is required', path: ['destinationOrgId'] }
+);
 
 export const updateTripStatusSchema = z.object({
   status: z.nativeEnum(TripStatus),

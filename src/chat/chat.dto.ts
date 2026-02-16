@@ -22,15 +22,15 @@ export const sendMessageSchema = z.object({
     if (data.messageType === 'TEXT') {
       return data.content && data.content.trim().length > 0;
     }
-    // IMAGE, PDF, FILE messages need attachments
-    if (['IMAGE', 'PDF', 'FILE'].includes(data.messageType)) {
+    // IMAGE, PDF, FILE, AUDIO messages need attachments
+    if (['IMAGE', 'PDF', 'FILE', 'AUDIO'].includes(data.messageType)) {
       return data.attachmentIds && data.attachmentIds.length > 0;
     }
     // Other types (SYSTEM, PAYMENT, etc.) handled internally
     return true;
   },
   {
-    message: 'TEXT messages require content. IMAGE/PDF/FILE messages require attachments.',
+    message: 'TEXT messages require content. IMAGE/PDF/FILE/AUDIO messages require attachments.',
   }
 );
 

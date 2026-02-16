@@ -72,6 +72,11 @@ export class TrackingService {
       throw new NotFoundError('Trip not found');
     }
 
+    // ✅ Guest user guard: reject pings if tracking is disabled
+    if (trip.trackingEnabled === false) {
+      throw new ValidationError('Tracking is disabled for this trip — driver is not yet registered');
+    }
+
     // Verify trip is in active state
     const activeStatuses = [TripStatus.LOADED, TripStatus.IN_TRANSIT, TripStatus.ARRIVED];
     if (!activeStatuses.includes(trip.status)) {
@@ -351,6 +356,15 @@ export class TrackingService {
 
     if (!hasAccess) {
       throw new ForbiddenError('Not authorized to view this trip');
+    }
+
+    // ✅ Guest user guard: return clear message if tracking is disabled
+    if (trip.trackingEnabled === false) {
+      return {
+        available: false,
+        reason: 'Tracking is disabled — driver is not yet registered',
+        tripId,
+      };
     }
 
     // ✅ Try Redis first (faster)

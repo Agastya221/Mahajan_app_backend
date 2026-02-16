@@ -69,6 +69,14 @@ export class FileService {
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      // Audio types for voice messages
+      'audio/aac',
+      'audio/mp4',
+      'audio/mpeg',
+      'audio/ogg',
+      'audio/webm',
+      'audio/wav',
+      'audio/x-m4a',
     ];
 
     if (!allowedTypes.includes(data.mimeType)) {
@@ -323,6 +331,7 @@ export class FileService {
 
     if (purpose === 'CHAT_ATTACHMENT') {
       if (mimeType?.startsWith('image/')) return AttachmentType.CHAT_IMAGE;
+      if (mimeType?.startsWith('audio/')) return AttachmentType.CHAT_AUDIO;
       return AttachmentType.CHAT_DOCUMENT;
     }
 

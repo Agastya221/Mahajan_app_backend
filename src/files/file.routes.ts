@@ -13,7 +13,7 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024, // 10MB max
   },
   fileFilter: (_req, file, cb) => {
-    // Allow images and documents
+    // Allow images, documents, and audio
     const allowedTypes = [
       'image/jpeg',
       'image/jpg',
@@ -22,6 +22,14 @@ const upload = multer({
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      // Audio types for voice messages
+      'audio/aac',
+      'audio/mp4',
+      'audio/mpeg',
+      'audio/ogg',
+      'audio/webm',
+      'audio/wav',
+      'audio/x-m4a',
     ];
 
     if (allowedTypes.includes(file.mimetype)) {

@@ -112,14 +112,32 @@ export class AuthService {
       },
     });
 
-    // If MAHAJAN, auto-create Org and OrgMember
+    // If MAHAJAN, auto-create Org and OrgMember, then link pending receiver trips
     if (role === UserRole.MAHAJAN) {
-      const org = await prisma.org.create({
-        data: {
-          name: `${data.name}'s Business`,
-          phone: decoded.phone,
-        },
+      // Check if a placeholder org already exists for this phone (created during guest trip)
+      let org = await prisma.org.findFirst({
+        where: { phone: decoded.phone },
       });
+
+      if (org) {
+        // ✅ Placeholder org exists — upgrade it with real name
+        org = await prisma.org.update({
+          where: { id: org.id },
+          data: { name: `${data.name}'s Business` },
+        });
+        logger.info('Upgraded placeholder org for newly registered receiver', {
+          orgId: org.id,
+          phone: decoded.phone,
+        });
+      } else {
+        // No placeholder — create new org as before
+        org = await prisma.org.create({
+          data: {
+            name: `${data.name}'s Business`,
+            phone: decoded.phone,
+          },
+        });
+      }
 
       await prisma.orgMember.create({
         data: {
@@ -127,6 +145,9 @@ export class AuthService {
           userId: user.id,
         },
       });
+
+      // ✅ Link any trips waiting for this receiver's phone number
+      await this.linkPendingReceiverTrips(decoded.phone);
     }
 
     // If DRIVER, auto-create empty DriverProfile and link pending trips
@@ -254,26 +275,73 @@ export class AuthService {
       where: {
         pendingDriverPhone: driverPhone,
         driverId: null,
-        status: 'CREATED',
       },
     });
 
-    for (const trip of pendingTrips) {
-      await prisma.trip.update({
-        where: { id: trip.id },
-        data: {
-          driverId: driverProfileId,
-          pendingDriverPhone: null,
-          status: 'ASSIGNED',
-        },
-      });
+    if (pendingTrips.length === 0) return;
 
-      logger.info('Linked pending trip to newly registered driver', {
-        tripId: trip.id,
-        driverPhone,
-        driverProfileId,
-      });
-    }
+    // ✅ Batch update for scale (updateMany for simple fields)
+    await prisma.trip.updateMany({
+      where: {
+        pendingDriverPhone: driverPhone,
+        driverId: null,
+      },
+      data: {
+        driverId: driverProfileId,
+        pendingDriverPhone: null,
+        driverRegistered: true,
+        trackingEnabled: true,
+      },
+    });
+
+    // Update status CREATED → ASSIGNED for trips that are still in CREATED state
+    await prisma.trip.updateMany({
+      where: {
+        driverId: driverProfileId,
+        status: 'CREATED',
+      },
+      data: {
+        status: 'ASSIGNED',
+      },
+    });
+
+    logger.info('Linked pending trips to newly registered driver', {
+      count: pendingTrips.length,
+      driverPhone,
+      driverProfileId,
+    });
+  }
+
+  // ✅ NEW: Link trips waiting for a receiver (Mahajan) to register
+  private async linkPendingReceiverTrips(receiverPhone: string) {
+    // Find all trips where this phone was stored as pending receiver
+    const pendingTrips = await prisma.trip.findMany({
+      where: {
+        pendingReceiverPhone: receiverPhone,
+        receiverRegistered: false,
+      },
+      select: { id: true },
+    });
+
+    if (pendingTrips.length === 0) return;
+
+    // Batch update — set receiverRegistered + paymentEnabled
+    await prisma.trip.updateMany({
+      where: {
+        pendingReceiverPhone: receiverPhone,
+        receiverRegistered: false,
+      },
+      data: {
+        receiverRegistered: true,
+        pendingReceiverPhone: null,
+        paymentEnabled: true,
+      },
+    });
+
+    logger.info('Linked pending trips to newly registered receiver', {
+      count: pendingTrips.length,
+      receiverPhone,
+    });
   }
 
   private generateAccessToken(userId: string, phone: string, role: UserRole): string {
