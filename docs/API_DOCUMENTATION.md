@@ -1,7 +1,7 @@
 # Mahajan Network Platform — API Documentation
 
 **Base URL:** `http://localhost:3000/api/v1`  
-**Version:** 2.1  
+**Version:** 2.2  
 **Last Updated:** 2026-02-16
 
 ---
@@ -404,10 +404,20 @@ POST /drivers
   "userId": "user_id_with_DRIVER_role",
   "licenseNo": "DL1420110012345",
   "emergencyPhone": "+919876543210",
+  "altPhone": "+919123456789",
   "notes": "Experienced driver",
   "deviceId": "device_unique_id"
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | ✅ | User ID (must have DRIVER role) |
+| `licenseNo` | string | ❌ | Driving license number |
+| `emergencyPhone` | string | ❌ | Emergency contact (`+91XXXXXXXXXX`) |
+| `altPhone` | string | ❌ | **NEW** — Alternate phone for breakdowns/accidents |
+| `notes` | string | ❌ | Notes about the driver |
+| `deviceId` | string | ❌ | Unique device ID for tracking |
 
 ---
 
@@ -441,7 +451,58 @@ GET /drivers?phone=9876&page=1&limit=20
 
 ---
 
-### 4.3 Get Driver by ID
+### 4.3 Search Driver by Phone ✨ NEW
+```http
+GET /drivers/search?phone=+919876543210
+```
+
+**Auth:** Private
+
+**Description:** Search for a registered driver by phone number. Used by the **trip creation screen** to check if a driver exists before creating a trip.
+
+**Query Params:**
+- `phone` (required, min 4 chars): Phone number to search (exact or partial match)
+
+**Response (Driver Found):**
+```json
+{
+  "success": true,
+  "data": {
+    "found": true,
+    "driver": {
+      "id": "clx1234...",
+      "userId": "clx5678...",
+      "name": "Ramesh Kumar",
+      "phone": "+919876543210",
+      "licenseNo": "DL1420110012345",
+      "emergencyPhone": "+919123456789",
+      "altPhone": "+919111222333",
+      "deviceId": "device_abc123"
+    }
+  }
+}
+```
+
+**Response (Not Found):**
+```json
+{
+  "success": true,
+  "data": {
+    "found": false,
+    "message": "No registered driver found with this phone number. You can still create the trip — driver will be added as a guest."
+  }
+}
+```
+
+**Frontend Flow:**
+1. User enters driver phone number
+2. Frontend calls `GET /drivers/search?phone=+919876543210`
+3. If `found: true` → auto-fill driver info, tracking will be enabled
+4. If `found: false` → show manual form, tracking will be disabled for this trip
+
+---
+
+### 4.4 Get Driver by ID
 ```http
 GET /drivers/:driverId
 ```
@@ -450,16 +511,29 @@ GET /drivers/:driverId
 
 ---
 
-### 4.4 Update Driver
+### 4.5 Update Driver
 ```http
 PATCH /drivers/:driverId
 ```
 
 **Auth:** Private
 
+**Request Body:**
+```json
+{
+  "licenseNo": "DL1420110012345",
+  "emergencyPhone": "+919876543210",
+  "altPhone": "+919111222333",
+  "notes": "Updated notes",
+  "deviceId": "new_device_id"
+}
+```
+
+All fields are optional — only send the ones you want to update.
+
 ---
 
-### 4.5 Delete Driver
+### 4.6 Delete Driver
 ```http
 DELETE /drivers/:driverId
 ```
@@ -622,19 +696,77 @@ POST /trips
   "sourceOrgId": "...",
   "destinationOrgId": "...",
   "receiverPhone": "+919876543210",
-  "truckId": "...",
-  "driverId": "...",
-  "pendingDriverPhone": "+919876543210",
+  "truckNumber": "DL1CAB1234",
+  "driverPhone": "+919876543210",
   "startPoint": "Azadpur Mandi",
   "endPoint": "Okhla Market",
-  "notes": "Handle with care"
+  "notes": "Handle with care",
+  "estimatedDistance": 25.5,
+  "estimatedArrival": "2026-02-17T18:00:00Z",
+  "sourceAddress": {
+    "label": "Azadpur Mandi",
+    "line1": "Shop 45, Block B",
+    "line2": "Azadpur Mandi Road",
+    "city": "New Delhi",
+    "state": "Delhi",
+    "pincode": "110033",
+    "landmark": "Near Gate 4",
+    "contactName": "Rajesh Kumar",
+    "contactPhone": "+919876543210"
+  },
+  "destinationAddress": {
+    "label": "Okhla Fruit Market",
+    "line1": "Godown #12",
+    "line2": "Okhla Industrial Area",
+    "city": "New Delhi",
+    "state": "Delhi",
+    "pincode": "110020",
+    "landmark": "Near Metro Station"
+  },
+  "driverPaymentAmount": 5000,
+  "driverPaymentPaidBy": "SOURCE"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sourceOrgId` | string | ✅ | Source organization CUID |
+| `destinationOrgId` | string | ❌* | Destination org CUID |
+| `receiverPhone` | string | ❌* | Receiver phone (`+91XXXXXXXXXX`) |
+| `truckNumber` | string | ✅ | Truck plate number (auto-creates if new) |
+| `driverPhone` | string | ✅ | Driver phone (auto-detects registration) |
+| `startPoint` | string | ✅ | Start point name |
+| `endPoint` | string | ✅ | End point name |
+| `sourceAddress` | object | ❌ | **NEW** — Structured source address |
+| `destinationAddress` | object | ❌ | **NEW** — Structured destination address |
+| `notes` | string | ❌ | Trip notes |
+| `estimatedDistance` | number | ❌ | Distance in km |
+| `estimatedArrival` | string | ❌ | ISO datetime |
+| `driverPaymentAmount` | number | ❌ | Driver payment amount |
+| `driverPaymentPaidBy` | string | ❌ | `SOURCE` \| `DESTINATION` \| `SPLIT` |
+
+\* Either `destinationOrgId` OR `receiverPhone` is required.
+
+**Address Object Schema:**
+```json
+{
+  "label": "Azadpur Mandi",       // optional, display name
+  "line1": "Shop 45, Block B",    // required, building/shop
+  "line2": "Azadpur Mandi Road",  // optional, area/street
+  "city": "New Delhi",            // required
+  "state": "Delhi",               // required
+  "pincode": "110033",            // required, 6 digits
+  "landmark": "Near Gate 4",      // optional
+  "contactName": "Rajesh Kumar",  // optional
+  "contactPhone": "+919876543210" // optional
 }
 ```
 
 **Notes:**
 - Provide either `destinationOrgId` OR `receiverPhone` (not both required)
-- If `receiverPhone` is used and no organization exists for that phone, a placeholder org is created automatically
-- If `driverId` is not provided but `pendingDriverPhone` is, the trip is created with a guest driver
+- If `receiverPhone` is used and no org exists, a placeholder org is created automatically
+- If driver is not registered → `trackingEnabled: false`, trip created as `CREATED`
+- If driver is registered → `trackingEnabled: true`, trip created as `ASSIGNED`
 
 **Guest User Fields in Response:**
 ```json
@@ -643,11 +775,13 @@ POST /trips
   "receiverRegistered": false,
   "trackingEnabled": true,
   "paymentEnabled": false,
-  "pendingReceiverPhone": "+919876543210"
+  "pendingReceiverPhone": "+919876543210",
+  "createdByUserId": "clx1234..."
 }
 ```
 - `trackingEnabled`: `false` if driver is a guest (not registered)
 - `paymentEnabled`: `false` if receiver is a guest (not registered)
+- `createdByUserId`: **NEW** — user who created this trip (needed for cancel permission)
 - These flags become `true` automatically when the guest user registers
 
 ---
@@ -673,7 +807,7 @@ GET /trips/:tripId
 
 **Auth:** Private
 
-**Response:** Full trip details with loadCard, receiveCard, events, locations, payments, etc.
+**Response:** Full trip details with loadCard, receiveCard, events, locations, payments, sourceAddress, destinationAddress, etc.
 
 ---
 
@@ -688,13 +822,195 @@ PATCH /trips/:tripId/status
 ```json
 {
   "status": "IN_TRANSIT",
-  "notes": "Left warehouse at 10 AM"
+  "remarks": "Left warehouse at 10 AM"
 }
 ```
 
+**Valid Status Transitions:**
+| From | Allowed To |
+|------|------------|
+| `CREATED` | `ASSIGNED`, `LOADED`, `CANCELLED` |
+| `ASSIGNED` | `LOADED`, `CANCELLED` |
+| `LOADED` | `IN_TRANSIT`, `CANCELLED` |
+| `IN_TRANSIT` | `ARRIVED`, `REACHED`, `CANCELLED` |
+| `ARRIVED` | `REACHED`, `DELIVERED`, `CANCELLED` |
+| `REACHED` | `DELIVERED`, `COMPLETED`, `CANCELLED` |
+| `DELIVERED` | `COMPLETED`, `DISPUTED` |
+| `COMPLETED` | `CLOSED`, `DISPUTED` |
+| `DISPUTED` | `CLOSED` |
+| `CANCELLED` | _(terminal)_ |
+| `CLOSED` | _(terminal)_ |
+
 ---
 
-### 7.5 Create Load Card
+### 7.5 Edit Trip ✨ NEW
+```http
+PATCH /trips/:tripId
+```
+
+**Auth:** Private (source or destination org member)
+
+**Description:** Edit trip details like points, addresses, notes, and estimates. Different fields have different editability rules based on trip status.
+
+**Request Body:**
+```json
+{
+  "startPoint": "Narela Mandi",
+  "endPoint": "Okhla Market",
+  "sourceAddress": {
+    "label": "Narela Mandi",
+    "line1": "Shop 12, Main Market",
+    "city": "New Delhi",
+    "state": "Delhi",
+    "pincode": "110040"
+  },
+  "destinationAddress": {
+    "label": "Okhla Fruit Market",
+    "line1": "Godown #12",
+    "city": "New Delhi",
+    "state": "Delhi",
+    "pincode": "110020"
+  },
+  "notes": "Updated notes",
+  "estimatedDistance": 30,
+  "estimatedArrival": "2026-02-17T20:00:00Z"
+}
+```
+
+| Field | Editable When |
+|-------|---------------|
+| `notes` | Always (except COMPLETED/CANCELLED/CLOSED) |
+| `estimatedDistance` | Always (except COMPLETED/CANCELLED/CLOSED) |
+| `estimatedArrival` | Always (except COMPLETED/CANCELLED/CLOSED) |
+| `startPoint` | Before `IN_TRANSIT` only |
+| `endPoint` | Before `IN_TRANSIT` only |
+| `sourceAddress` | Before `IN_TRANSIT` only |
+| `destinationAddress` | Before `IN_TRANSIT` only |
+
+**Response:** Updated trip object. Logs `TRIP_EDITED` event. Posts ✏️ notification to chat.
+
+**Error Responses:**
+- `403`: Not authorized (not an org member)
+- `400`: Cannot edit a trip in COMPLETED/CANCELLED/CLOSED status
+- `400`: Start/end points can only be edited before IN_TRANSIT
+- `400`: At least one field must be provided
+
+---
+
+### 7.6 Cancel Trip (Soft Cancel) ✨ NEW
+```http
+POST /trips/:tripId/cancel
+```
+
+**Auth:** Private (**only the user who created the trip** — `createdByUserId`)
+
+**Description:** Soft cancel a trip. Only the exact Mahajan who created the trip can cancel it — not the receiver, not other org members. The trip record is preserved with cancel metadata.
+
+**Request Body:**
+```json
+{
+  "reason": "Truck not available, rescheduling for tomorrow"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | ✅ | Reason for cancellation (1-500 chars) |
+
+**Cancellable Statuses:** `CREATED`, `ASSIGNED`, `LOADED` only.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "...",
+    "status": "CANCELLED",
+    "cancelledAt": "2026-02-16T18:00:00Z",
+    "cancelledBy": "user_id_who_cancelled",
+    "cancelReason": "Truck not available, rescheduling for tomorrow",
+    "sourceOrg": { ... },
+    "destinationOrg": { ... },
+    "truck": { ... },
+    "driver": { ... }
+  }
+}
+```
+
+**Error Responses:**
+- `403`: Only the Mahajan who created this trip can cancel it
+- `400`: Cannot cancel a trip in IN_TRANSIT/DELIVERED/COMPLETED status
+
+Posts ❌ cancel notification to chat.
+
+---
+
+### 7.7 Change Driver/Truck Mid-Trip ✨ NEW
+```http
+POST /trips/:tripId/change-driver
+```
+
+**Auth:** Private (source org member only)
+
+**Description:** Change the driver and/or truck mid-trip (e.g. breakdown, accident). If the new driver is **not registered on the app**, live tracking is automatically paused.
+
+**Request Body:**
+```json
+{
+  "driverPhone": "+919999888777",
+  "truckNumber": "DL2CAB5678",
+  "reason": "Truck broke down near Panipat, replacing with another vehicle"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `driverPhone` | string | ❌* | New driver's phone (`+91XXXXXXXXXX`) |
+| `truckNumber` | string | ❌* | New truck's plate number |
+| `reason` | string | ✅ | Reason for the change (1-500 chars) |
+
+\* At least one of `driverPhone` or `truckNumber` must be provided.
+
+**Behavior:**
+
+| Scenario | What happens |
+|----------|-------------|
+| New driver is **registered** | `driverId` updated, `trackingEnabled: true` |
+| New driver is **not registered** | `pendingDriverPhone` set, `trackingEnabled: false`, tracking stops |
+| New truck number is **new** | Truck auto-created and linked to trip |
+| New truck number **exists** | Existing truck linked to trip |
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "...",
+    "status": "IN_TRANSIT",
+    "trackingEnabled": false,
+    "driverRegistered": false,
+    "pendingDriverPhone": "+919999888777",
+    "truck": {
+      "id": "...",
+      "number": "DL2CAB5678"
+    }
+  }
+}
+```
+
+**Chat Notifications:**
+- 🔄 Driver changed: Old Driver → New Driver. ⚠️ Live tracking paused.
+- 🚛 Truck changed: DL1CAB1234 → DL2CAB5678
+
+**Trip Events Logged:** `DRIVER_CHANGED`, `TRUCK_CHANGED`
+
+**Error Responses:**
+- `403`: Only source org can change driver/truck
+- `400`: Cannot change on COMPLETED/CANCELLED/CLOSED trips
+
+---
+
+### 7.8 Create Load Card
 ```http
 POST /trips/:tripId/load-card
 ```
@@ -726,7 +1042,7 @@ POST /trips/:tripId/load-card
 
 ---
 
-### 7.6 Create Receive Card
+### 7.9 Create Receive Card
 ```http
 POST /trips/:tripId/receive-card
 ```

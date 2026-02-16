@@ -20,6 +20,13 @@ router.post('/', authenticate, driverController.createDriver);
 router.get('/', authenticate, driverController.getDrivers);
 
 /**
+ * @route   GET /api/v1/drivers/search?phone=+919876543210
+ * @desc    Search for a driver by phone number (for trip creation screen)
+ * @access  Private
+ */
+router.get('/search', authenticate, driverController.searchDriver);
+
+/**
  * @route   GET /api/v1/drivers/:driverId
  * @desc    Get driver by ID
  * @access  Private

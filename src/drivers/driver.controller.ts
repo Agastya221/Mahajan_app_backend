@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { DriverService } from './driver.service';
-import { createDriverSchema, updateDriverSchema } from './driver.dto';
+import { createDriverSchema, updateDriverSchema, searchDriverSchema } from './driver.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
 
@@ -29,6 +29,16 @@ export class DriverController {
       success: true,
       data: result.drivers,
       pagination: result.pagination,
+    });
+  });
+
+  searchDriver = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { phone } = searchDriverSchema.parse(req.query);
+    const result = await driverService.searchDriverByPhone(phone);
+
+    res.json({
+      success: true,
+      data: result,
     });
   });
 

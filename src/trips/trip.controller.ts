@@ -3,6 +3,9 @@ import { TripService } from './trip.service';
 import {
   createTripSchema,
   updateTripStatusSchema,
+  editTripSchema,
+  cancelTripSchema,
+  changeTripDriverSchema,
   createLoadCardSchema,
   createReceiveCardSchema,
 } from './trip.dto';
@@ -55,6 +58,39 @@ export class TripController {
     const { tripId } = req.params;
     const data = updateTripStatusSchema.parse(req.body);
     const trip = await tripService.updateTripStatus(tripId, data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: trip,
+    });
+  });
+
+  editTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { tripId } = req.params;
+    const data = editTripSchema.parse(req.body);
+    const trip = await tripService.editTrip(tripId, data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: trip,
+    });
+  });
+
+  cancelTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { tripId } = req.params;
+    const data = cancelTripSchema.parse(req.body);
+    const trip = await tripService.cancelTrip(tripId, data, req.user!.id);
+
+    res.json({
+      success: true,
+      data: trip,
+    });
+  });
+
+  changeTripDriver = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { tripId } = req.params;
+    const data = changeTripDriverSchema.parse(req.body);
+    const trip = await tripService.changeTripDriver(tripId, data, req.user!.id);
 
     res.json({
       success: true,

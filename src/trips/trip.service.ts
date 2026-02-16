@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../utils/errors';
-import { CreateTripDto, UpdateTripStatusDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
+import { CreateTripDto, UpdateTripStatusDto, EditTripDto, CancelTripDto, ChangeTripDriverDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
 import { TripStatus, TripEventType, UserRole, Prisma } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
@@ -112,6 +112,7 @@ export class TripService {
           destinationOrgId,
           truckId: truck.id,
           driverId: driverProfileId,
+          createdByUserId: createdBy,
           pendingDriverPhone: driverProfileId ? null : data.driverPhone,
           pendingReceiverPhone,
           driverRegistered: isDriverRegistered,
@@ -124,6 +125,8 @@ export class TripService {
           estimatedArrival: data.estimatedArrival ? new Date(data.estimatedArrival) : null,
           status: driverProfileId ? TripStatus.ASSIGNED : TripStatus.CREATED,
           notes: data.notes,
+          sourceAddress: data.sourceAddress || Prisma.JsonNull,
+          destinationAddress: data.destinationAddress || Prisma.JsonNull,
         },
         include: {
           sourceOrg: {
@@ -845,6 +848,324 @@ export class TripService {
     }
 
     return receiveCard.newReceiveCard;
+  }
+
+  // ============================================
+  // ✅ EDIT TRIP
+  // ============================================
+  async editTrip(tripId: string, data: EditTripDto, userId: string) {
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      include: {
+        sourceOrg: { select: { id: true, name: true } },
+        destinationOrg: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!trip) throw new NotFoundError('Trip not found');
+
+    // Must be a member of source or destination org
+    const membership = await prisma.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: { in: [trip.sourceOrgId, trip.destinationOrgId] },
+      },
+    });
+    if (!membership) throw new ForbiddenError('Not authorized to edit this trip');
+
+    // Cannot edit completed/cancelled/closed trips
+    const noEditStatuses: TripStatus[] = [TripStatus.COMPLETED, TripStatus.CANCELLED, TripStatus.CLOSED];
+    if (noEditStatuses.includes(trip.status)) {
+      throw new ValidationError(`Cannot edit a trip in ${trip.status} status`);
+    }
+
+    // Points/addresses can only be edited before IN_TRANSIT
+    const preTransitStatuses: TripStatus[] = [TripStatus.CREATED, TripStatus.ASSIGNED, TripStatus.LOADED];
+    if (
+      (data.startPoint || data.endPoint || data.sourceAddress || data.destinationAddress) &&
+      !preTransitStatuses.includes(trip.status)
+    ) {
+      throw new ValidationError('Start/end points and addresses can only be edited before the trip is in transit');
+    }
+
+    // Build update data
+    const updateData: any = {};
+    if (data.startPoint !== undefined) updateData.startPoint = data.startPoint;
+    if (data.endPoint !== undefined) updateData.endPoint = data.endPoint;
+    if (data.sourceAddress !== undefined) updateData.sourceAddress = data.sourceAddress;
+    if (data.destinationAddress !== undefined) updateData.destinationAddress = data.destinationAddress;
+    if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.estimatedDistance !== undefined) updateData.estimatedDistance = data.estimatedDistance;
+    if (data.estimatedArrival !== undefined) updateData.estimatedArrival = new Date(data.estimatedArrival);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedTrip = await tx.trip.update({
+        where: { id: tripId },
+        data: updateData,
+        include: {
+          sourceOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          destinationOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          truck: true,
+          driver: {
+            include: {
+              user: { select: { id: true, name: true, phone: true } },
+            },
+          },
+        },
+      });
+
+      // Log event
+      const changedFields = Object.keys(updateData).join(', ');
+      await tx.tripEvent.create({
+        data: {
+          tripId,
+          eventType: TripEventType.TRIP_EDITED,
+          description: `Trip edited — fields updated: ${changedFields}`,
+          createdByUserId: userId,
+        },
+      });
+
+      return updatedTrip;
+    });
+
+    // Post to chat (non-blocking)
+    try {
+      const chatService = new ChatService();
+      await chatService.sendSystemMessage(
+        tripId,
+        `✏️ Trip details updated`,
+        { type: 'TRIP_EDITED', tripId, updatedFields: Object.keys(updateData) }
+      );
+    } catch (error) {
+      logger.error('Failed to send trip edit notification to chat', {
+        tripId, error: error instanceof Error ? error.message : 'Unknown',
+      });
+    }
+
+    return updated;
+  }
+
+  // ============================================
+  // ✅ CANCEL TRIP (Soft Cancel)
+  // ============================================
+  async cancelTrip(tripId: string, data: CancelTripDto, userId: string) {
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+    });
+
+    if (!trip) throw new NotFoundError('Trip not found');
+
+    // Only the exact user who created the trip can cancel
+    if (trip.createdByUserId !== userId) {
+      throw new ForbiddenError('Only the Mahajan who created this trip can cancel it');
+    }
+
+    // Can only cancel in early statuses
+    const cancellableStatuses: TripStatus[] = [
+      TripStatus.CREATED,
+      TripStatus.ASSIGNED,
+      TripStatus.LOADED,
+    ];
+    if (!cancellableStatuses.includes(trip.status)) {
+      throw new ValidationError(`Cannot cancel a trip in ${trip.status} status. Trips can only be cancelled before they are in transit.`);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const cancelledTrip = await tx.trip.update({
+        where: { id: tripId },
+        data: {
+          status: TripStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancelledBy: userId,
+          cancelReason: data.reason,
+        },
+        include: {
+          sourceOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          destinationOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          truck: true,
+          driver: {
+            include: {
+              user: { select: { id: true, name: true, phone: true } },
+            },
+          },
+        },
+      });
+
+      await tx.tripEvent.create({
+        data: {
+          tripId,
+          eventType: TripEventType.TRIP_CANCELLED,
+          description: `Trip cancelled — Reason: ${data.reason}`,
+          createdByUserId: userId,
+        },
+      });
+
+      return cancelledTrip;
+    });
+
+    // Post to chat
+    try {
+      const chatService = new ChatService();
+      await chatService.sendSystemMessage(
+        tripId,
+        `❌ Trip cancelled — ${data.reason}`,
+        { type: 'TRIP_CANCELLED', tripId, reason: data.reason, cancelledBy: userId }
+      );
+    } catch (error) {
+      logger.error('Failed to send cancel notification to chat', {
+        tripId, error: error instanceof Error ? error.message : 'Unknown',
+      });
+    }
+
+    return updated;
+  }
+
+  // ============================================
+  // ✅ CHANGE DRIVER/TRUCK MID-TRIP
+  // ============================================
+  async changeTripDriver(tripId: string, data: ChangeTripDriverDto, userId: string) {
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      include: {
+        truck: true,
+        driver: {
+          include: { user: { select: { id: true, name: true, phone: true } } },
+        },
+      },
+    });
+
+    if (!trip) throw new NotFoundError('Trip not found');
+
+    // Must be source org member
+    const sourceMembership = await prisma.orgMember.findFirst({
+      where: { userId, orgId: trip.sourceOrgId },
+    });
+    if (!sourceMembership) {
+      throw new ForbiddenError('Only the source organization can change driver/truck');
+    }
+
+    // Cannot change on already completed/cancelled trips
+    const noChangeStatuses: TripStatus[] = [TripStatus.COMPLETED, TripStatus.CANCELLED, TripStatus.CLOSED];
+    if (noChangeStatuses.includes(trip.status)) {
+      throw new ValidationError(`Cannot change driver/truck for a trip in ${trip.status} status`);
+    }
+
+    const updateData: any = {};
+    const events: { eventType: TripEventType; description: string }[] = [];
+    const chatMessages: string[] = [];
+    let newTrackingEnabled = trip.trackingEnabled;
+
+    // --- Change Driver ---
+    if (data.driverPhone) {
+      const oldDriverName = trip.driver?.user?.name || trip.pendingDriverPhone || 'Unknown';
+
+      // Look up new driver
+      const newDriverUser = await prisma.user.findUnique({
+        where: { phone: data.driverPhone },
+        include: { driverProfile: true },
+      });
+
+      if (newDriverUser && newDriverUser.role === UserRole.DRIVER && newDriverUser.driverProfile) {
+        // New driver is registered
+        updateData.driverId = newDriverUser.driverProfile.id;
+        updateData.pendingDriverPhone = null;
+        updateData.driverRegistered = true;
+        newTrackingEnabled = true;
+
+        events.push({
+          eventType: TripEventType.DRIVER_CHANGED,
+          description: `Driver changed from ${oldDriverName} to ${newDriverUser.name} (registered). Reason: ${data.reason}`,
+        });
+        chatMessages.push(`🔄 Driver changed: ${oldDriverName} → ${newDriverUser.name}. Tracking active.`);
+      } else {
+        // New driver is NOT registered — guest driver
+        updateData.driverId = null;
+        updateData.pendingDriverPhone = data.driverPhone;
+        updateData.driverRegistered = false;
+        newTrackingEnabled = false;
+
+        events.push({
+          eventType: TripEventType.DRIVER_CHANGED,
+          description: `Driver changed from ${oldDriverName} to guest driver ${data.driverPhone} (not registered). Tracking paused. Reason: ${data.reason}`,
+        });
+        chatMessages.push(`🔄 Driver changed: ${oldDriverName} → ${data.driverPhone} (not on app). ⚠️ Live tracking paused.`);
+      }
+
+      updateData.trackingEnabled = newTrackingEnabled;
+    }
+
+    // --- Change Truck ---
+    if (data.truckNumber) {
+      const oldTruckNumber = trip.truck?.number || 'Unknown';
+
+      let newTruck = await prisma.truck.findUnique({
+        where: { number: data.truckNumber },
+      });
+      if (!newTruck) {
+        newTruck = await prisma.truck.create({
+          data: { number: data.truckNumber, orgId: trip.sourceOrgId },
+        });
+      }
+
+      updateData.truckId = newTruck.id;
+
+      events.push({
+        eventType: TripEventType.TRUCK_CHANGED,
+        description: `Truck changed from ${oldTruckNumber} to ${data.truckNumber}. Reason: ${data.reason}`,
+      });
+      chatMessages.push(`🚛 Truck changed: ${oldTruckNumber} → ${data.truckNumber}`);
+    }
+
+    // Apply updates
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedTrip = await tx.trip.update({
+        where: { id: tripId },
+        data: updateData,
+        include: {
+          sourceOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          destinationOrg: { select: { id: true, name: true, phone: true, gstin: true } },
+          truck: true,
+          driver: {
+            include: {
+              user: { select: { id: true, name: true, phone: true } },
+            },
+          },
+        },
+      });
+
+      // Log all events
+      for (const event of events) {
+        await tx.tripEvent.create({
+          data: {
+            tripId,
+            eventType: event.eventType,
+            description: event.description,
+            createdByUserId: userId,
+          },
+        });
+      }
+
+      return updatedTrip;
+    });
+
+    // Post chat messages (non-blocking)
+    try {
+      const chatService = new ChatService();
+      for (const msg of chatMessages) {
+        await chatService.sendSystemMessage(tripId, msg, {
+          type: 'DRIVER_TRUCK_CHANGE',
+          tripId,
+          reason: data.reason,
+          trackingEnabled: newTrackingEnabled,
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to send driver/truck change notification to chat', {
+        tripId, error: error instanceof Error ? error.message : 'Unknown',
+      });
+    }
+
+    return updated;
   }
 
   private validateStatusTransition(currentStatus: TripStatus, newStatus: TripStatus) {

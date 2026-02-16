@@ -27,11 +27,32 @@ router.get('/', authenticate, tripController.getTrips);
 router.get('/:tripId', authenticate, tripController.getTripById);
 
 /**
+ * @route   PATCH /api/v1/trips/:tripId
+ * @desc    Edit trip details (points, notes, addresses, estimates)
+ * @access  Private (source or dest org member)
+ */
+router.patch('/:tripId', authenticate, tripController.editTrip);
+
+/**
  * @route   PATCH /api/v1/trips/:tripId/status
  * @desc    Update trip status
  * @access  Private
  */
 router.patch('/:tripId/status', authenticate, tripController.updateTripStatus);
+
+/**
+ * @route   POST /api/v1/trips/:tripId/cancel
+ * @desc    Soft cancel a trip (source org only, before IN_TRANSIT)
+ * @access  Private (source org member only)
+ */
+router.post('/:tripId/cancel', authenticate, tripController.cancelTrip);
+
+/**
+ * @route   POST /api/v1/trips/:tripId/change-driver
+ * @desc    Change driver/truck mid-trip (breakdown scenario)
+ * @access  Private (source org member only)
+ */
+router.post('/:tripId/change-driver', authenticate, tripController.changeTripDriver);
 
 /**
  * @route   POST /api/v1/trips/:tripId/load-card

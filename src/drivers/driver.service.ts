@@ -183,6 +183,44 @@ export class DriverService {
     return user.driverProfile;
   }
 
+  /**
+   * Search driver by phone — used by trip creation screen
+   * Returns structured response for frontend to decide next step
+   */
+  async searchDriverByPhone(phone: string) {
+    // Search by exact match or partial match
+    const user = await prisma.user.findFirst({
+      where: {
+        phone: { contains: phone },
+        role: UserRole.DRIVER,
+      },
+      include: {
+        driverProfile: true,
+      },
+    });
+
+    if (!user || !user.driverProfile) {
+      return {
+        found: false,
+        message: 'No registered driver found with this phone number. You can still create the trip — driver will be added as a guest.',
+      };
+    }
+
+    return {
+      found: true,
+      driver: {
+        id: user.driverProfile.id,
+        userId: user.id,
+        name: user.name,
+        phone: user.phone,
+        licenseNo: user.driverProfile.licenseNo,
+        emergencyPhone: user.driverProfile.emergencyPhone,
+        altPhone: user.driverProfile.altPhone,
+        deviceId: user.driverProfile.deviceId,
+      },
+    };
+  }
+
   async updateDriver(driverId: string, data: UpdateDriverDto) {
     // Check if deviceId is being updated and is unique
     if (data.deviceId) {

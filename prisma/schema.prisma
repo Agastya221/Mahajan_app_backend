@@ -66,6 +66,9 @@ enum TripEventType {
   DISPUTE_RAISED
   DISPUTE_RESOLVED
   TRIP_CANCELLED
+  TRIP_EDITED
+  DRIVER_CHANGED
+  TRUCK_CHANGED
   CLOSED
   NOTE
 }
@@ -241,6 +244,7 @@ model DriverProfile {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   licenseNo      String?
   emergencyPhone String?
+  altPhone       String?  // Alternate phone for emergencies (accident/breakdown)
   notes          String?
   deviceId       String?  @unique
 
@@ -315,6 +319,9 @@ model Trip {
   driverId         String?
   driver           DriverProfile? @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
 
+  // ✅ Who created this trip (for cancel permission)
+  createdByUserId  String?
+
   pendingDriverPhone   String?  // Phone of driver who hasn't registered yet
   pendingReceiverPhone String?  // Phone of receiver (dest org contact) who hasn't registered yet
 
@@ -334,6 +341,15 @@ model Trip {
   estimatedArrival  DateTime?
   notes             String?
   status            TripStatus @default(CREATED)
+
+  // ✅ Structured addresses (mandi-style, like Flipkart)
+  sourceAddress      Json?   // { label, line1, line2, city, state, pincode, landmark, contactName, contactPhone }
+  destinationAddress Json?   // same structure
+
+  // ✅ Soft cancel fields
+  cancelledAt     DateTime?
+  cancelledBy     String?    // userId who cancelled
+  cancelReason    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -358,6 +374,7 @@ model Trip {
   @@index([truckId, status])
   @@index([pendingDriverPhone])
   @@index([pendingReceiverPhone])
+  @@index([createdByUserId])
 }
 
 // ============================================
