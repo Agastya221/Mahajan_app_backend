@@ -44,6 +44,14 @@ export class SocketGateway {
         credentials: true,
       },
       path: '/socket.io/',
+      pingTimeout: 60000, // 60s: Wait longer before closing connection (helps with slow networks/cold starts)
+      pingInterval: 25000, // 25s: Send ping every 25s to keep connection alive
+      transports: ['websocket', 'polling'], // Allow both, but prefer websocket if possible
+      connectionStateRecovery: {
+        // Recover state (rooms, etc.) after temporary disconnection
+        maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+        skipMiddlewares: true,
+      },
     });
 
     this.setupMiddleware();

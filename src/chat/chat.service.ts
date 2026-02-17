@@ -557,10 +557,16 @@ export class ChatService {
 
     // Broadcast via Redis WebSocket
     try {
-      await redisPublisher.publish(
-        `thread:${threadId}:message`,
-        JSON.stringify(fullMessage)
-      );
+      if (global.socketGateway) {
+        // Direct local broadcast (faster, works without Redis)
+        global.socketGateway.broadcastToChat(threadId, 'chat:message', fullMessage);
+      } else {
+        // Fallback or distributed setup
+        await redisPublisher.publish(
+          `thread:${threadId}:message`,
+          JSON.stringify(fullMessage)
+        );
+      }
     } catch (error) {
       console.error('Failed to broadcast message:', error);
     }
@@ -622,14 +628,22 @@ export class ChatService {
 
     // Broadcast read receipt via WebSocket
     try {
-      await redisPublisher.publish(
-        `thread:${threadId}:read`,
-        JSON.stringify({
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:read', {
           userId,
           readAt: new Date(),
           count: result.count,
-        })
-      );
+        });
+      } else {
+        await redisPublisher.publish(
+          `thread:${threadId}:read`,
+          JSON.stringify({
+            userId,
+            readAt: new Date(),
+            count: result.count,
+          })
+        );
+      }
     } catch (error) {
       console.error('Failed to broadcast read receipt:', error);
     }
@@ -656,14 +670,22 @@ export class ChatService {
 
     // Broadcast delivery receipt via Redis for WebSocket
     try {
-      await redisPublisher.publish(
-        `thread:${threadId}:delivered`,
-        JSON.stringify({
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:delivered', {
           userId,
           deliveredAt: new Date(),
           count: result.count,
-        })
-      );
+        });
+      } else {
+        await redisPublisher.publish(
+          `thread:${threadId}:delivered`,
+          JSON.stringify({
+            userId,
+            deliveredAt: new Date(),
+            count: result.count,
+          })
+        );
+      }
     } catch (error) {
       console.error('Failed to broadcast delivery receipt:', error);
     }
