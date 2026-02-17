@@ -112,7 +112,7 @@ export class SocketGateway {
   private setupHandlers() {
     this.io.on('connection', (socket: Socket) => {
       const user = (socket.data as SocketData).user;
-      console.log(`Client connected: ${socket.id} (User: ${user.id})`);
+      console.log(`[Socket] Connection Authenticated: ${socket.id} (User: ${user.id} - ${user.phone})`);
 
       // Subscribe to trip location updates
       socket.on('tracking:subscribe', async ({ tripId }: { tripId: string }) => {
@@ -175,7 +175,7 @@ export class SocketGateway {
           }
 
           socket.join(`chat:${threadId}`);
-          console.log(`Socket ${socket.id} joined chat:${threadId}`);
+          console.log(`Socket ${socket.id} joined chat:${threadId} [SUCCESS]`);
           socket.emit('chat:joined', { threadId });
 
           // Auto-mark messages as delivered when user joins the chat room
@@ -205,7 +205,7 @@ export class SocketGateway {
             console.error('Error auto-marking messages as delivered:', err);
           }
         } catch (error) {
-          console.error('Error joining chat:', error);
+          console.error(`Socket ${socket.id} FAILED to join chat:${threadId}`, error);
           socket.emit('error', { message: 'Failed to join chat' });
         }
       });
