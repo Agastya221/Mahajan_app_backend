@@ -370,6 +370,42 @@ export class ChatService {
   async sendMessage(threadId: string, data: SendMessageDto & { metadata?: any }, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
 
+    // ✅ Idempotency Check: Return existing message if client sends same ID
+    if (data.clientMessageId) {
+      const existing = await prisma.chatMessage.findUnique({
+        where: {
+          threadId_clientMessageId: {
+            threadId,
+            clientMessageId: data.clientMessageId,
+          },
+        },
+        include: {
+          senderUser: { select: { id: true, name: true, phone: true } },
+          attachments: {
+            select: {
+              id: true,
+              url: true,
+              fileName: true,
+              mimeType: true,
+              sizeBytes: true,
+              type: true,
+            },
+          },
+          replyTo: {
+            select: {
+              id: true,
+              content: true,
+              messageType: true,
+              senderUser: { select: { id: true, name: true } },
+              attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
+            },
+          },
+        },
+      });
+
+      if (existing) return existing;
+    }
+
     // Verify attachments exist and belong to user
     if (data.attachmentIds && data.attachmentIds.length > 0) {
       const attachments = await prisma.attachment.findMany({
@@ -400,56 +436,101 @@ export class ChatService {
     else if (data.messageType === 'FILE') previewText = '📎 File';
     else if (data.messageType === 'AUDIO') previewText = '🎤 Voice message';
 
-    const message = await prisma.$transaction(async (tx) => {
-      const newMessage = await tx.chatMessage.create({
-        data: {
-          threadId,
-          senderUserId: userId,
-          content: data.content || null,
-          messageType: data.messageType || 'TEXT',
-          metadata: data.metadata || Prisma.JsonNull,
-          replyToId: data.replyToId || null,
-        },
-        include: {
-          senderUser: {
-            select: { id: true, name: true, phone: true },
+    let messageId: string;
+
+    try {
+      const message = await prisma.$transaction(async (tx) => {
+        const newMessage = await tx.chatMessage.create({
+          data: {
+            threadId,
+            senderUserId: userId,
+            content: data.content || null,
+            messageType: data.messageType || 'TEXT',
+            metadata: data.metadata || Prisma.JsonNull,
+            replyToId: data.replyToId || null,
+            clientMessageId: data.clientMessageId || null,
           },
-          replyTo: {
-            select: {
-              id: true,
-              content: true,
-              messageType: true,
-              senderUser: { select: { id: true, name: true } },
+          include: {
+            senderUser: {
+              select: { id: true, name: true, phone: true },
+            },
+            replyTo: {
+              select: {
+                id: true,
+                content: true,
+                messageType: true,
+                senderUser: { select: { id: true, name: true } },
+              },
             },
           },
-        },
-      });
-
-      // Link attachments to message
-      if (data.attachmentIds && data.attachmentIds.length > 0) {
-        await tx.attachment.updateMany({
-          where: { id: { in: data.attachmentIds } },
-          data: { messageId: newMessage.id },
         });
-      }
 
-      // Update thread metadata
-      await tx.chatThread.update({
-        where: { id: threadId },
-        data: {
-          updatedAt: new Date(),
-          lastMessageAt: new Date(),
-          lastMessageText: previewText,
-          unreadCount: { increment: 1 },
-        },
+        messageId = newMessage.id;
+
+        // Link attachments to message
+        if (data.attachmentIds && data.attachmentIds.length > 0) {
+          await tx.attachment.updateMany({
+            where: { id: { in: data.attachmentIds } },
+            data: { messageId: newMessage.id },
+          });
+        }
+
+        // Update thread metadata
+        await tx.chatThread.update({
+          where: { id: threadId },
+          data: {
+            updatedAt: new Date(),
+            lastMessageAt: new Date(),
+            lastMessageText: previewText,
+            unreadCount: { increment: 1 },
+          },
+        });
+
+        return newMessage;
       });
 
-      return newMessage;
-    });
+      messageId = message.id;
+    } catch (error: any) {
+      // ✅ Handle race condition: If message created in parallel
+      if (error.code === 'P2002' && data.clientMessageId) {
+        const existing = await prisma.chatMessage.findUnique({
+          where: {
+            threadId_clientMessageId: {
+              threadId,
+              clientMessageId: data.clientMessageId,
+            },
+          },
+          include: {
+            senderUser: { select: { id: true, name: true, phone: true } },
+            attachments: {
+              select: {
+                id: true,
+                url: true,
+                fileName: true,
+                mimeType: true,
+                sizeBytes: true,
+                type: true,
+              },
+            },
+            replyTo: {
+              select: {
+                id: true,
+                content: true,
+                messageType: true,
+                senderUser: { select: { id: true, name: true } },
+                attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
+              },
+            },
+          },
+        });
+        if (existing) return existing;
+      }
+      throw error;
+    }
 
     // Reload with attachments
     const fullMessage = await prisma.chatMessage.findUnique({
-      where: { id: message.id },
+      where: { id: messageId },
       include: {
         senderUser: { select: { id: true, name: true, phone: true } },
         attachments: {

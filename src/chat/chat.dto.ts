@@ -16,6 +16,7 @@ export const sendMessageSchema = z.object({
   messageType: z.nativeEnum(ChatMessageType).default('TEXT'),
   attachmentIds: z.array(z.string().cuid()).max(10).optional(),
   replyToId: z.string().cuid().optional(),
+  clientMessageId: z.string().optional(),
 }).refine(
   (data) => {
     // TEXT messages need content
