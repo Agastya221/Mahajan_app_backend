@@ -550,37 +550,50 @@ export class ChatService {
   // ============================================
   // ✅ Read Receipts
   // ============================================
-  async markMessagesAsRead(threadId: string, userId: string) {
+  async markMessagesAsRead(threadId: string, userId: string, readUpToMsgId?: string) {
     await this.getThreadById(threadId, userId);
+
+    let whereClause: any = {
+      threadId,
+      senderUserId: { not: userId },
+      isRead: false,
+    };
+
+    if (readUpToMsgId) {
+      const msg = await prisma.chatMessage.findUnique({ where: { id: readUpToMsgId } });
+      if (msg) {
+        whereClause.createdAt = { lte: msg.createdAt };
+      }
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.chatMessage.updateMany({
-        where: {
-          threadId,
-          senderUserId: { not: userId },
-          isRead: false,
-        },
+        where: whereClause,
         data: { isRead: true, readAt: new Date() },
+      });
+
+      const remainingUnread = await tx.chatMessage.count({
+        where: { threadId, senderUserId: { not: userId }, isRead: false }
       });
 
       await tx.chatThread.update({
         where: { id: threadId },
-        data: { unreadCount: 0 },
+        data: { unreadCount: remainingUnread },
       });
 
-      return { count: updated.count };
+      return { count: updated.count, readUpTo: readUpToMsgId };
     });
 
     // Broadcast read receipt
     try {
       if ((global as any).socketGateway) {
         (global as any).socketGateway.broadcastToChat(threadId, 'chat:read', {
-          userId, readAt: new Date(), count: result.count,
+          userId, readAt: new Date(), count: result.count, readUpTo: result.readUpTo
         });
       } else {
         await redisPublisher.publish(
           `thread:${threadId}:read`,
-          JSON.stringify({ userId, readAt: new Date(), count: result.count })
+          JSON.stringify({ userId, readAt: new Date(), count: result.count, readUpTo: result.readUpTo })
         );
       }
     } catch (error) {
@@ -591,34 +604,43 @@ export class ChatService {
   }
 
   // ✅ Delivery Acknowledgment
-  async markMessagesAsDelivered(threadId: string, userId: string) {
+  async markMessagesAsDelivered(threadId: string, userId: string, deliveredUpToMsgId?: string) {
     await this.getThreadById(threadId, userId);
 
-    const result = await prisma.chatMessage.updateMany({
-      where: {
-        threadId,
-        senderUserId: { not: userId },
-        isDelivered: false,
-      },
+    let whereClause: any = {
+      threadId,
+      senderUserId: { not: userId },
+      isDelivered: false,
+    };
+
+    if (deliveredUpToMsgId) {
+      const msg = await prisma.chatMessage.findUnique({ where: { id: deliveredUpToMsgId } });
+      if (msg) {
+        whereClause.createdAt = { lte: msg.createdAt };
+      }
+    }
+
+    const updated = await prisma.chatMessage.updateMany({
+      where: whereClause,
       data: { isDelivered: true, deliveredAt: new Date() },
     });
 
     try {
       if ((global as any).socketGateway) {
         (global as any).socketGateway.broadcastToChat(threadId, 'chat:delivered', {
-          userId, deliveredAt: new Date(), count: result.count,
+          userId, deliveredAt: new Date(), count: updated.count, deliveredUpTo: deliveredUpToMsgId
         });
       } else {
         await redisPublisher.publish(
           `thread:${threadId}:delivered`,
-          JSON.stringify({ userId, deliveredAt: new Date(), count: result.count })
+          JSON.stringify({ userId, deliveredAt: new Date(), count: updated.count, deliveredUpTo: deliveredUpToMsgId })
         );
       }
     } catch (error) {
       console.error('Failed to broadcast delivery receipt:', error);
     }
 
-    return { count: result.count };
+    return { count: updated.count, deliveredUpTo: deliveredUpToMsgId };
   }
 
   // ✅ Pin/Unpin Thread

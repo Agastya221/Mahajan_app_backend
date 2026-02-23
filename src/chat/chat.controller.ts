@@ -79,9 +79,9 @@ export class ChatController {
    * Body examples:
    *   { "isPinned": true }
    *   { "isArchived": false }
-   *   { "markAsRead": true }
-   *   { "markAsDelivered": true }
-   *   { "isPinned": true, "markAsRead": true }   ← multiple ops in one call
+   *   { "readUpTo": "msg_abc123" }
+   *   { "deliveredUpTo": "msg_abc123" }
+   *   { "isPinned": true, "readUpTo": "msg_abc123" }   ← multiple ops in one call
    */
   updateThread = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
@@ -103,14 +103,14 @@ export class ChatController {
     }
 
     // ── Mark as Read ──
-    if (data.markAsRead) {
-      const readResult = await chatService.markMessagesAsRead(threadId, userId);
+    if (data.readUpTo) {
+      const readResult = await chatService.markMessagesAsRead(threadId, userId, data.readUpTo);
       results.read = readResult;
     }
 
     // ── Mark as Delivered ──
-    if (data.markAsDelivered) {
-      const deliveredResult = await chatService.markMessagesAsDelivered(threadId, userId);
+    if (data.deliveredUpTo) {
+      const deliveredResult = await chatService.markMessagesAsDelivered(threadId, userId, data.deliveredUpTo);
       results.delivered = deliveredResult;
     }
 

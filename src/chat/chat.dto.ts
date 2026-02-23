@@ -18,12 +18,12 @@ export const createThreadSchema = z.object({
 export const updateThreadSchema = z.object({
   isPinned: z.boolean().optional(),
   isArchived: z.boolean().optional(),
-  markAsRead: z.boolean().optional(),       // true = mark all messages as read
-  markAsDelivered: z.boolean().optional(),   // true = mark all messages as delivered
+  readUpTo: z.string().optional(),
+  deliveredUpTo: z.string().optional(),
 }).refine(
-  (data) => data.isPinned !== undefined || data.isArchived !== undefined || data.markAsRead || data.markAsDelivered,
+  (data) => data.isPinned !== undefined || data.isArchived !== undefined || data.readUpTo !== undefined || data.deliveredUpTo !== undefined,
   {
-    message: 'At least one of isPinned, isArchived, markAsRead, or markAsDelivered must be provided',
+    message: 'At least one of isPinned, isArchived, readUpTo, or deliveredUpTo must be provided',
   }
 );
 
