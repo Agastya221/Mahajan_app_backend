@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { DriverController } from './driver.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { TrackingController } from '../tracking/tracking.controller';
 
 const router = Router();
 const driverController = new DriverController();
+const trackingController = new TrackingController();
 
 /**
  * @route   POST /api/v1/drivers
@@ -19,12 +21,7 @@ router.post('/', authenticate, driverController.createDriver);
  */
 router.get('/', authenticate, driverController.getDrivers);
 
-/**
- * @route   GET /api/v1/drivers/search?phone=+919876543210
- * @desc    Search for a driver by phone number (for trip creation screen)
- * @access  Private
- */
-router.get('/search', authenticate, driverController.searchDriver);
+
 
 /**
  * @route   GET /api/v1/drivers/:driverId
@@ -39,6 +36,18 @@ router.get('/:driverId', authenticate, driverController.getDriverById);
  * @access  Private
  */
 router.patch('/:driverId', authenticate, driverController.updateDriver);
+
+/**
+ * @route   GET /api/v1/drivers/:driverId/trips?status=ACTIVE
+ * @desc    Get active trips for a driver
+ * @access  Private (Driver only)
+ */
+router.get('/:driverId/trips', authenticate, (req, res, next) => {
+    if (req.query.status === 'ACTIVE') {
+        return trackingController.getActiveTrips(req, res, next);
+    }
+    return res.status(400).json({ success: false, message: 'Invalid or missing status filter' });
+});
 
 /**
  * @route   DELETE /api/v1/drivers/:driverId

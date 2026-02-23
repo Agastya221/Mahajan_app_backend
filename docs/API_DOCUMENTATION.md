@@ -1,8 +1,9 @@
 # Mahajan Network Platform — API Documentation
 
 **Base URL:** `http://localhost:3000/api/v1`  
-**Version:** 2.2  
-**Last Updated:** 2026-02-16
+**Version:** 2.3 (org-pair chat architecture)  
+**Last Updated:** 2026-02-23  
+**Next:** See [REST v3 Refactoring Plan](./REST_V3_REFACTOR_PLAN.md) for upcoming API structure improvements.
 
 ---
 
@@ -237,10 +238,13 @@ POST /orgs
 
 ### 2.2 Get User's Organizations
 ```http
-GET /orgs
+GET /orgs?search=kumar
 ```
 
 **Auth:** Private
+
+**Query Params:**
+- `search` (optional): Filter organizations by name, phone, or owner name. If provided, searches globally across all orgs (min 2 chars).
 
 **Response:**
 ```json
@@ -253,35 +257,6 @@ GET /orgs
       "city": "Delhi",
       "memberCount": 1,
       "truckCount": 5
-    }
-  ]
-}
-```
-
----
-
-### 2.3 Search Organizations
-```http
-GET /orgs/search?query=kumar
-```
-
-**Auth:** Private
-
-**Query Params:**
-- `query` (required): Search term
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "...",
-      "name": "Kumar Traders",
-      "city": "Delhi",
-      "phone": "+919876543210",
-      "ownerName": "Rajesh Kumar",
-      "displayLabel": "Kumar Traders (Delhi) - Rajesh Kumar"
     }
   ]
 }
@@ -421,7 +396,7 @@ POST /drivers
 
 ---
 
-### 4.2 List Drivers
+### 4.2 List and Search Drivers
 ```http
 GET /drivers?phone=9876&page=1&limit=20
 ```
@@ -429,7 +404,7 @@ GET /drivers?phone=9876&page=1&limit=20
 **Auth:** Private
 
 **Query Params:**
-- `phone` (optional): Filter by phone
+- `phone` (optional): Filter by phone. Works as a search if min 4 chars. Used by the trip creation screen to check if a driver exists.
 - `page` (optional): Page number (default: 1)
 - `limit` (optional): Items per page (default: 20, max: 100)
 
@@ -448,58 +423,6 @@ GET /drivers?phone=9876&page=1&limit=20
   }
 }
 ```
-
----
-
-### 4.3 Search Driver by Phone ✨ NEW
-```http
-GET /drivers/search?phone=+919876543210
-```
-
-**Auth:** Private
-
-**Description:** Search for a registered driver by phone number. Used by the **trip creation screen** to check if a driver exists before creating a trip.
-
-**Query Params:**
-- `phone` (required, min 4 chars): Phone number to search (exact or partial match)
-
-**Response (Driver Found):**
-```json
-{
-  "success": true,
-  "data": {
-    "found": true,
-    "driver": {
-      "id": "clx1234...",
-      "userId": "clx5678...",
-      "name": "Ramesh Kumar",
-      "phone": "+919876543210",
-      "licenseNo": "DL1420110012345",
-      "emergencyPhone": "+919123456789",
-      "altPhone": "+919111222333",
-      "deviceId": "device_abc123"
-    }
-  }
-}
-```
-
-**Response (Not Found):**
-```json
-{
-  "success": true,
-  "data": {
-    "found": false,
-    "message": "No registered driver found with this phone number. You can still create the trip — driver will be added as a guest."
-  }
-}
-```
-
-**Frontend Flow:**
-1. User enters driver phone number
-2. Frontend calls `GET /drivers/search?phone=+919876543210`
-3. If `found: true` → auto-fill driver info, tracking will be enabled
-4. If `found: false` → show manual form, tracking will be disabled for this trip
-
 ---
 
 ### 4.4 Get Driver by ID
@@ -533,7 +456,16 @@ All fields are optional — only send the ones you want to update.
 
 ---
 
-### 4.6 Delete Driver
+### 4.6 Get Active Trips
+```http
+GET /drivers/:driverId/trips?status=ACTIVE
+```
+
+**Auth:** Private
+
+---
+
+### 4.7 Delete Driver
 ```http
 DELETE /drivers/:driverId
 ```
@@ -811,14 +743,16 @@ GET /trips/:tripId
 
 ---
 
-### 7.4 Update Trip Status
+### 7.4 Update / Edit Trip
 ```http
-PATCH /trips/:tripId/status
+PATCH /trips/:tripId
 ```
 
-**Auth:** Private
+**Auth:** Private 
 
-**Request Body:**
+**Description:** Unified endpoint to edit trip details, change status, change driver/truck mid-trip, or cancel the trip. The operation performed depends on the fields provided in the request body.
+
+**Request Body (Status Update):**
 ```json
 {
   "status": "IN_TRANSIT",
@@ -826,187 +760,65 @@ PATCH /trips/:tripId/status
 }
 ```
 
-**Valid Status Transitions:**
-| From | Allowed To |
-|------|------------|
-| `CREATED` | `ASSIGNED`, `LOADED`, `CANCELLED` |
-| `ASSIGNED` | `LOADED`, `CANCELLED` |
-| `LOADED` | `IN_TRANSIT`, `CANCELLED` |
-| `IN_TRANSIT` | `ARRIVED`, `REACHED`, `CANCELLED` |
-| `ARRIVED` | `REACHED`, `DELIVERED`, `CANCELLED` |
-| `REACHED` | `DELIVERED`, `COMPLETED`, `CANCELLED` |
-| `DELIVERED` | `COMPLETED`, `DISPUTED` |
-| `COMPLETED` | `CLOSED`, `DISPUTED` |
-| `DISPUTED` | `CLOSED` |
-| `CANCELLED` | _(terminal)_ |
-| `CLOSED` | _(terminal)_ |
-
----
-
-### 7.5 Edit Trip ✨ NEW
-```http
-PATCH /trips/:tripId
-```
-
-**Auth:** Private (source or destination org member)
-
-**Description:** Edit trip details like points, addresses, notes, and estimates. Different fields have different editability rules based on trip status.
-
-**Request Body:**
+**Request Body (Edit fields):**
 ```json
 {
   "startPoint": "Narela Mandi",
-  "endPoint": "Okhla Market",
-  "sourceAddress": {
-    "label": "Narela Mandi",
-    "line1": "Shop 12, Main Market",
-    "city": "New Delhi",
-    "state": "Delhi",
-    "pincode": "110040"
-  },
-  "destinationAddress": {
-    "label": "Okhla Fruit Market",
-    "line1": "Godown #12",
-    "city": "New Delhi",
-    "state": "Delhi",
-    "pincode": "110020"
-  },
-  "notes": "Updated notes",
-  "estimatedDistance": 30,
-  "estimatedArrival": "2026-02-17T20:00:00Z"
+  "notes": "Updated notes"
 }
 ```
 
-| Field | Editable When |
-|-------|---------------|
-| `notes` | Always (except COMPLETED/CANCELLED/CLOSED) |
-| `estimatedDistance` | Always (except COMPLETED/CANCELLED/CLOSED) |
-| `estimatedArrival` | Always (except COMPLETED/CANCELLED/CLOSED) |
-| `startPoint` | Before `IN_TRANSIT` only |
-| `endPoint` | Before `IN_TRANSIT` only |
-| `sourceAddress` | Before `IN_TRANSIT` only |
-| `destinationAddress` | Before `IN_TRANSIT` only |
-
-**Response:** Updated trip object. Logs `TRIP_EDITED` event. Posts ✏️ notification to chat.
-
-**Error Responses:**
-- `403`: Not authorized (not an org member)
-- `400`: Cannot edit a trip in COMPLETED/CANCELLED/CLOSED status
-- `400`: Start/end points can only be edited before IN_TRANSIT
-- `400`: At least one field must be provided
-
----
-
-### 7.6 Cancel Trip (Soft Cancel) ✨ NEW
-```http
-POST /trips/:tripId/cancel
-```
-
-**Auth:** Private (**only the user who created the trip** — `createdByUserId`)
-
-**Description:** Soft cancel a trip. Only the exact Mahajan who created the trip can cancel it — not the receiver, not other org members. The trip record is preserved with cancel metadata.
-
-**Request Body:**
+**Request Body (Cancel Trip - soft cancel):**
 ```json
 {
-  "reason": "Truck not available, rescheduling for tomorrow"
+  "status": "CANCELLED",
+  "cancelReason": "Truck not available, rescheduling for tomorrow"
 }
 ```
+*(Only the Mahajan who created the trip can cancel it).*
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `reason` | string | ✅ | Reason for cancellation (1-500 chars) |
-
-**Cancellable Statuses:** `CREATED`, `ASSIGNED`, `LOADED` only.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "...",
-    "status": "CANCELLED",
-    "cancelledAt": "2026-02-16T18:00:00Z",
-    "cancelledBy": "user_id_who_cancelled",
-    "cancelReason": "Truck not available, rescheduling for tomorrow",
-    "sourceOrg": { ... },
-    "destinationOrg": { ... },
-    "truck": { ... },
-    "driver": { ... }
-  }
-}
-```
-
-**Error Responses:**
-- `403`: Only the Mahajan who created this trip can cancel it
-- `400`: Cannot cancel a trip in IN_TRANSIT/DELIVERED/COMPLETED status
-
-Posts ❌ cancel notification to chat.
-
----
-
-### 7.7 Change Driver/Truck Mid-Trip ✨ NEW
-```http
-POST /trips/:tripId/change-driver
-```
-
-**Auth:** Private (source org member only)
-
-**Description:** Change the driver and/or truck mid-trip (e.g. breakdown, accident). If the new driver is **not registered on the app**, live tracking is automatically paused.
-
-**Request Body:**
+**Request Body (Change Driver/Truck Mid-Trip):**
 ```json
 {
   "driverPhone": "+919999888777",
   "truckNumber": "DL2CAB5678",
-  "reason": "Truck broke down near Panipat, replacing with another vehicle"
+  "changeReason": "Truck broke down near Panipat, replacing with another vehicle"
 }
 ```
+*(Only source org can change driver/truck mid-trip).*
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `driverPhone` | string | ❌* | New driver's phone (`+91XXXXXXXXXX`) |
-| `truckNumber` | string | ❌* | New truck's plate number |
-| `reason` | string | ✅ | Reason for the change (1-500 chars) |
+**Response:** Updated trip object. Appropriate chat cards (Trip Edit, Status Change, Cancelletions) will be posted to the organzation thread.
 
-\* At least one of `driverPhone` or `truckNumber` must be provided.
+---
 
-**Behavior:**
+### 7.5 Get Location History
+```http
+GET /trips/:tripId/locations?limit=100&offset=0
+```
 
-| Scenario | What happens |
-|----------|-------------|
-| New driver is **registered** | `driverId` updated, `trackingEnabled: true` |
-| New driver is **not registered** | `pendingDriverPhone` set, `trackingEnabled: false`, tracking stops |
-| New truck number is **new** | Truck auto-created and linked to trip |
-| New truck number **exists** | Existing truck linked to trip |
+**Auth:** Private
+
+---
+
+### 7.6 Get Latest Location
+```http
+GET /trips/:tripId/latest
+```
+
+**Auth:** Private
 
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "id": "...",
-    "status": "IN_TRANSIT",
-    "trackingEnabled": false,
-    "driverRegistered": false,
-    "pendingDriverPhone": "+919999888777",
-    "truck": {
-      "id": "...",
-      "number": "DL2CAB5678"
-    }
+    "lat": 28.7041,
+    "lng": 77.1025,
+    "speed": 45.5,
+    "capturedAt": "2026-02-13T12:30:00Z"
   }
 }
 ```
-
-**Chat Notifications:**
-- 🔄 Driver changed: Old Driver → New Driver. ⚠️ Live tracking paused.
-- 🚛 Truck changed: DL1CAB1234 → DL2CAB5678
-
-**Trip Events Logged:** `DRIVER_CHANGED`, `TRUCK_CHANGED`
-
-**Error Responses:**
-- `403`: Only source org can change driver/truck
-- `400`: Cannot change on COMPLETED/CANCELLED/CLOSED trips
 
 ---
 
@@ -1113,47 +925,7 @@ POST /tracking/ping
 - Locations stored in PostgreSQL (1 per 30s per trip)
 - Real-time broadcast via Socket.IO to `trip:${tripId}` room
 
----
 
-### 8.2 Get Location History
-```http
-GET /tracking/trips/:tripId/locations?limit=100&offset=0
-```
-
-**Auth:** Private
-
----
-
-### 8.3 Get Latest Location
-```http
-GET /tracking/trips/:tripId/latest
-```
-
-**Auth:** Private
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "lat": 28.7041,
-    "lng": 77.1025,
-    "speed": 45.5,
-    "capturedAt": "2026-02-13T12:30:00Z"
-  }
-}
-```
-
----
-
-### 8.4 Get Active Trips for Driver
-```http
-GET /tracking/drivers/:driverId/active-trips
-```
-
-**Auth:** Private (DRIVER only)
-
----
 
 ## 9. Ledger
 
@@ -1285,63 +1057,44 @@ POST /ledger/payments/request
 
 ---
 
-### 9.9 Mark Payment as Paid
+### 9.9 Update Payment Status
 ```http
-POST /ledger/payments/mark-paid
+PATCH /ledger/payments/:paymentId
 ```
 
-**Auth:** Private (sender marks)
+**Auth:** Private
 
-**Request Body:**
+**Description:** Unified endpoint to advance a payment request through its lifecycle.
+
+**Request Body (Sender Marks Paid):**
 ```json
 {
-  "paymentId": "...",
+  "status": "PAID",
   "mode": "UPI",
   "utrNumber": "123456789012",
   "proofNote": "Paid via Google Pay"
 }
 ```
+*(Response: Updates to `status: MARKED_AS_PAID`. Ledger balance NOT updated yet.)*
 
-**Response:** Updates to `status: MARKED_AS_PAID`. Posts card (💸 ₹25,000 marked as paid via UPI).
-
-**Note:** Ledger balance NOT updated yet.
-
----
-
-### 9.10 Confirm Payment
-```http
-POST /ledger/payments/confirm
-```
-
-**Auth:** Private (receiver confirms)
-
-**Request Body:**
+**Request Body (Receiver Confirms):**
 ```json
 {
-  "paymentId": "..."
+  "status": "CONFIRMED"
 }
 ```
+*(Response: Updates to `status: CONFIRMED`. **NOW** creates `LedgerEntry` and updates `Account.balance`.)*
 
-**Response:** Updates to `status: CONFIRMED`. **NOW** creates `LedgerEntry` and updates `Account.balance`. Posts card (✅ ₹25,000 confirmed).
-
----
-
-### 9.11 Dispute Payment
-```http
-POST /ledger/payments/dispute
-```
-
-**Auth:** Private (receiver disputes)
-
-**Request Body:**
+**Request Body (Receiver Disputes):**
 ```json
 {
-  "paymentId": "...",
+  "status": "DISPUTED",
   "disputeReason": "Amount not received in bank"
 }
 ```
+*(Response: Updates to `status: DISPUTED`. Ledger balance NOT updated.)*
 
-**Response:** Updates to `status: DISPUTED`. Ledger balance NOT updated. Posts card (⚠️ ₹25,000 disputed).
+**Response:** Returns updated payment. Posts status card to chat.
 
 ---
 
@@ -1397,18 +1150,19 @@ POST /chat/threads
 **Request Body:**
 ```json
 {
-  "accountId": "...",
-  "tripId": "..."
+  "counterpartyOrgId": "...", // Primary way to create
+  "accountId": "...",         // Sub-optimal way, auto-resolves to org pair
+  "tripId": "..."             // Sub-optimal way, auto-resolves to org pair
 }
 ```
 
-**Note:** Provide either `accountId` OR `tripId` (not both). Returns existing thread or creates new one.
+**Note:** Provide at least one of `counterpartyOrgId`, `accountId`, or `tripId`. The backend will automatically resolve this to an Organization Pair (the user's org and the counterparty org) and return the single, unified chat thread for that pair. If it does not exist, a new one is created.
 
 ---
 
 ### 10.2 List Threads
 ```http
-GET /chat/threads?accountId=...&tripId=...&page=1&limit=20
+GET /chat/threads?page=1&limit=20
 ```
 
 **Auth:** Private
@@ -1464,7 +1218,8 @@ POST /chat/threads/:threadId/messages
 ```json
 {
   "content": "Payment sent via UPI",
-  "messageType": "TEXT"
+  "messageType": "TEXT",
+  "tripId": "..." // Optional: links message to a specific trip context
 }
 ```
 
@@ -1492,6 +1247,7 @@ POST /chat/threads/:threadId/messages
 | `PDF` | `attachmentIds` | 📄 Document |
 | `FILE` | `attachmentIds` | 📎 File |
 | `AUDIO` | `attachmentIds` | 🎤 Voice message |
+| `TRIP_CARD` | `tripId` | 🚚 Trip Info |
 
 **Response (includes attachments for playback):**
 ```json
@@ -1518,57 +1274,36 @@ POST /chat/threads/:threadId/messages
 
 ---
 
-### 10.6 Mark as Read
+### 10.6 Update Thread State
 ```http
-POST /chat/threads/:threadId/read
+PATCH /chat/threads/:threadId
 ```
 
 **Auth:** Private
 
----
+**Description:** Unified endpoint to update thread state, including pinning, archiving, and read/delivery receipts.
 
-### 10.7 Mark as Delivered
-```http
-POST /chat/threads/:threadId/delivered
-```
-
-**Auth:** Private
-
----
-
-### 10.8 Pin/Unpin Thread
-```http
-POST /chat/threads/:threadId/pin
-```
-
-**Auth:** Private
-
-**Request Body:**
+**Request Body (Pin/Archive):**
 ```json
 {
-  "isPinned": true
+  "isPinned": true,
+  "isArchived": false
 }
 ```
 
----
-
-### 10.9 Archive/Unarchive Thread
-```http
-POST /chat/threads/:threadId/archive
-```
-
-**Auth:** Private
-
-**Request Body:**
+**Request Body (Read/Delivered Receipts):**
 ```json
 {
-  "isArchived": true
+  "readUpTo": "msg_abc123",
+  "deliveredUpTo": "msg_abc123"
 }
 ```
 
+**Response:** Updated thread object.
+
 ---
 
-### 10.10 Get Unread Counts
+### 10.7 Get Unread Counts
 ```http
 GET /chat/unread
 ```
@@ -1590,16 +1325,16 @@ GET /chat/unread
 
 ---
 
-### 10.11 Search Messages
+### 10.8 Search Messages
 ```http
-GET /chat/search?orgId=...&query=payment
+GET /chat/messages?orgId=...&q=payment
 ```
 
 **Auth:** Private
 
 ---
 
-### 10.12 Perform Action (Rich Actions)
+### 10.9 Perform Action (Rich Actions)
 ```http
 POST /chat/threads/:threadId/action
 ```
@@ -1616,7 +1351,7 @@ POST /chat/threads/:threadId/action
     "startPoint": "Delhi",
     "endPoint": "Mumbai"
     // sourceOrgId & destinationOrgId are OPTIONAL
-    // If creating from account-based chat, they are auto-detected!
+    // They are auto-detected from the org-pair chat thread!
   }
 }
 ```
@@ -1637,9 +1372,9 @@ POST /chat/threads/:threadId/action
 ```
 
 **✨ Smart Auto-Detection:**
-- When creating trip from **account-based chat thread**, `sourceOrgId` and `destinationOrgId` are automatically extracted from the account relationship
-- `sourceOrgId` = `account.ownerOrgId`
-- `destinationOrgId` = `account.counterpartyOrgId`
+- When creating a trip from an **org-pair chat thread**, `sourceOrgId` and `destinationOrgId` are automatically extracted from the thread itself
+- `sourceOrgId` = `thread.orgId` (or `thread.counterpartyOrgId` based on who is creating)
+- `destinationOrgId` = `thread.counterpartyOrgId` (or `thread.orgId`)
 - You can still manually provide these IDs to override auto-detection
 
 

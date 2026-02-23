@@ -2,10 +2,7 @@ import { Response } from 'express';
 import { TripService } from './trip.service';
 import {
   createTripSchema,
-  updateTripStatusSchema,
-  editTripSchema,
-  cancelTripSchema,
-  changeTripDriverSchema,
+  updateTripSchema,
   createLoadCardSchema,
   createReceiveCardSchema,
 } from './trip.dto';
@@ -16,6 +13,14 @@ import { TripStatus } from '@prisma/client';
 const tripService = new TripService();
 
 export class TripController {
+  // ════════════════════════════════════════════
+  // TRIPS — CRUD
+  // ════════════════════════════════════════════
+
+  /**
+   * POST /api/v1/trips
+   * Create a new trip.
+   */
   createTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
     const data = createTripSchema.parse(req.body);
     const trip = await tripService.createTrip(data, req.user!.id);
@@ -26,6 +31,11 @@ export class TripController {
     });
   });
 
+  /**
+   * GET /api/v1/trips
+   * List all trips (paginated).
+   * Query: ?orgId=xxx&status=IN_TRANSIT&page=1&limit=20
+   */
   getTrips = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { orgId, status, page, limit } = req.query;
 
@@ -44,6 +54,10 @@ export class TripController {
     });
   });
 
+  /**
+   * GET /api/v1/trips/:tripId
+   * Get trip by ID with full details.
+   */
   getTripById = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { tripId } = req.params;
     const trip = await tripService.getTripById(tripId, req.user!.id);
@@ -54,10 +68,16 @@ export class TripController {
     });
   });
 
-  updateTripStatus = asyncHandler(async (req: AuthRequest, res: Response) => {
+  /**
+   * PATCH /api/v1/trips/:tripId
+   * Unified trip update endpoint.
+   * Handles: status transitions, editing fields, cancelling, and changing drivers.
+   */
+  updateTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { tripId } = req.params;
-    const data = updateTripStatusSchema.parse(req.body);
-    const trip = await tripService.updateTripStatus(tripId, data, req.user!.id);
+    const data = updateTripSchema.parse(req.body);
+
+    const trip = await tripService.updateTrip(tripId, data, req.user!.id);
 
     res.json({
       success: true,
@@ -65,39 +85,14 @@ export class TripController {
     });
   });
 
-  editTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { tripId } = req.params;
-    const data = editTripSchema.parse(req.body);
-    const trip = await tripService.editTrip(tripId, data, req.user!.id);
+  // ════════════════════════════════════════════
+  // LOAD & RECEIVE CARDS
+  // ════════════════════════════════════════════
 
-    res.json({
-      success: true,
-      data: trip,
-    });
-  });
-
-  cancelTrip = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { tripId } = req.params;
-    const data = cancelTripSchema.parse(req.body);
-    const trip = await tripService.cancelTrip(tripId, data, req.user!.id);
-
-    res.json({
-      success: true,
-      data: trip,
-    });
-  });
-
-  changeTripDriver = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { tripId } = req.params;
-    const data = changeTripDriverSchema.parse(req.body);
-    const trip = await tripService.changeTripDriver(tripId, data, req.user!.id);
-
-    res.json({
-      success: true,
-      data: trip,
-    });
-  });
-
+  /**
+   * POST /api/v1/trips/:tripId/load-cards
+   * Create a load card for the trip.
+   */
   createLoadCard = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { tripId } = req.params;
     const data = createLoadCardSchema.parse(req.body);
@@ -109,6 +104,10 @@ export class TripController {
     });
   });
 
+  /**
+   * POST /api/v1/trips/:tripId/receive-cards
+   * Create a receive card for the trip.
+   */
   createReceiveCard = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { tripId } = req.params;
     const data = createReceiveCardSchema.parse(req.body);

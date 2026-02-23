@@ -1,6 +1,12 @@
 import { Response } from 'express';
 import { ChatService } from './chat.service';
-import { createThreadSchema, sendMessageSchema } from './chat.dto';
+import {
+  createThreadSchema,
+  updateThreadSchema,
+  sendMessageSchema,
+  searchMessagesSchema,
+  chatActionSchema,
+} from './chat.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { TripService } from '../trips/trip.service';
@@ -12,6 +18,15 @@ const tripService = new TripService();
 const ledgerService = new LedgerService();
 
 export class ChatController {
+  // ════════════════════════════════════════════
+  // THREADS — CRUD
+  // ════════════════════════════════════════════
+
+  /**
+   * POST /chat/threads
+   * Create or get an org-pair chat thread.
+   * Body: { counterpartyOrgId?, accountId?, tripId? }
+   */
   createThread = asyncHandler(async (req: AuthRequest, res: Response) => {
     const data = createThreadSchema.parse(req.body);
     const result = await chatService.createOrGetThread(data, req.user!.id);
@@ -23,6 +38,11 @@ export class ChatController {
     });
   });
 
+  /**
+   * GET /chat/threads
+   * List all chat threads for the current user.
+   * Query: ?page=1&limit=20
+   */
   getThreads = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { page, limit } = req.query;
 
@@ -38,6 +58,10 @@ export class ChatController {
     });
   });
 
+  /**
+   * GET /chat/threads/:threadId
+   * Get a single thread by ID.
+   */
   getThreadById = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
     const thread = await chatService.getThreadById(threadId, req.user!.id);
@@ -48,6 +72,63 @@ export class ChatController {
     });
   });
 
+  /**
+   * PATCH /chat/threads/:threadId
+   * Unified thread update — pin, archive, read receipts, delivery acknowledgment.
+   *
+   * Body examples:
+   *   { "isPinned": true }
+   *   { "isArchived": false }
+   *   { "markAsRead": true }
+   *   { "markAsDelivered": true }
+   *   { "isPinned": true, "markAsRead": true }   ← multiple ops in one call
+   */
+  updateThread = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const data = updateThreadSchema.parse(req.body);
+    const userId = req.user!.id;
+
+    const results: Record<string, any> = {};
+
+    // ── Pin/Unpin ──
+    if (data.isPinned !== undefined) {
+      results.thread = await chatService.togglePinThread(threadId, userId, data.isPinned);
+      results.pinned = data.isPinned;
+    }
+
+    // ── Archive/Unarchive ──
+    if (data.isArchived !== undefined) {
+      results.thread = await chatService.toggleArchiveThread(threadId, userId, data.isArchived);
+      results.archived = data.isArchived;
+    }
+
+    // ── Mark as Read ──
+    if (data.markAsRead) {
+      const readResult = await chatService.markMessagesAsRead(threadId, userId);
+      results.read = readResult;
+    }
+
+    // ── Mark as Delivered ──
+    if (data.markAsDelivered) {
+      const deliveredResult = await chatService.markMessagesAsDelivered(threadId, userId);
+      results.delivered = deliveredResult;
+    }
+
+    res.json({
+      success: true,
+      data: results,
+    });
+  });
+
+  // ════════════════════════════════════════════
+  // MESSAGES
+  // ════════════════════════════════════════════
+
+  /**
+   * GET /chat/threads/:threadId/messages
+   * Get messages for a thread.
+   * Query: ?limit=50&offset=0
+   */
   getMessages = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -61,6 +142,11 @@ export class ChatController {
     });
   });
 
+  /**
+   * POST /chat/threads/:threadId/messages
+   * Send a message in a thread.
+   * Body: { content, messageType, attachmentIds?, replyToId?, clientMessageId?, tripId? }
+   */
   sendMessage = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
     const data = sendMessageSchema.parse(req.body);
@@ -73,55 +159,14 @@ export class ChatController {
     });
   });
 
-  // ✅ WhatsApp-like Features
-  markAsRead = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { threadId } = req.params;
-    const result = await chatService.markMessagesAsRead(threadId, req.user!.id);
+  // ════════════════════════════════════════════
+  // SEARCH & UNREAD
+  // ════════════════════════════════════════════
 
-    res.json({
-      success: true,
-      data: result,
-      message: `Marked ${result.count} message(s) as read`,
-    });
-  });
-
-  markAsDelivered = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { threadId } = req.params;
-    const result = await chatService.markMessagesAsDelivered(threadId, req.user!.id);
-
-    res.json({
-      success: true,
-      data: result,
-      message: `Marked ${result.count} message(s) as delivered`,
-    });
-  });
-
-  togglePin = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { threadId } = req.params;
-    const { isPinned } = req.body;
-
-    const thread = await chatService.togglePinThread(threadId, req.user!.id, isPinned);
-
-    res.json({
-      success: true,
-      data: thread,
-      message: isPinned ? 'Thread pinned' : 'Thread unpinned',
-    });
-  });
-
-  toggleArchive = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { threadId } = req.params;
-    const { isArchived } = req.body;
-
-    const thread = await chatService.toggleArchiveThread(threadId, req.user!.id, isArchived);
-
-    res.json({
-      success: true,
-      data: thread,
-      message: isArchived ? 'Thread archived' : 'Thread unarchived',
-    });
-  });
-
+  /**
+   * GET /chat/unread
+   * Get unread counts per thread for the current user.
+   */
   getUnreadCounts = asyncHandler(async (req: AuthRequest, res: Response) => {
     const counts = await chatService.getUnreadCounts(req.user!.id);
 
@@ -131,20 +176,25 @@ export class ChatController {
     });
   });
 
+  /**
+   * GET /chat/messages?orgId=xxx&q=payment
+   * Search messages across threads in an org.
+   */
   searchMessages = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { orgId, query } = req.query;
+    const { orgId, q, query } = req.query;
+    const searchQuery = (q || query) as string; // support both ?q= and legacy ?query=
 
-    if (!orgId || !query) {
+    if (!orgId || !searchQuery) {
       return res.status(400).json({
         success: false,
-        message: 'orgId and query are required',
+        message: 'orgId and q are required',
       });
     }
 
     const messages = await chatService.searchMessages(
       orgId as string,
       req.user!.id,
-      query as string
+      searchQuery
     );
 
     res.json({
@@ -153,31 +203,29 @@ export class ChatController {
     });
   });
 
-  // ============================================
-  // ✅ SUPER APP: All-in-one chat action hub
-  // Actions happen INSIDE the org-pair chat.
-  // Trips, payments, invoices all live in one conversation.
-  // ============================================
+  // ════════════════════════════════════════════
+  // ACTIONS — Rich actions inside conversation
+  // ════════════════════════════════════════════
+
+  /**
+   * POST /chat/threads/:threadId/actions
+   * Perform rich actions (Create Trip, Request Payment, Share Data) within chat.
+   * Body: { actionType: "CREATE_TRIP", payload: { ... } }
+   */
   performAction = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
-    const { actionType, payload } = req.body;
+    const { actionType, payload } = chatActionSchema.parse(req.body);
     const userId = req.user!.id;
-
-    if (!actionType) {
-      res.status(400).json({ success: false, message: 'actionType is required' });
-      return;
-    }
 
     let result;
 
     switch (actionType) {
       // ────────── TRIP ACTIONS ──────────
       case 'CREATE_TRIP': {
-        // ✅ SMART AUTO-DETECTION: Thread knows both orgs
+        // ✅ Auto-detect orgs from the org-pair thread
         let tripPayload = { ...payload };
 
         if (!tripPayload.sourceOrgId || !tripPayload.destinationOrgId) {
-          // Fetch thread to get org pair directly
           const thread = await prisma.chatThread.findUnique({
             where: { id: threadId },
             select: {
@@ -193,61 +241,53 @@ export class ChatController {
           });
 
           if (thread) {
-            // Use account relationship if available (preserves owner/counterparty semantics)
             if (thread.account) {
               tripPayload.sourceOrgId = tripPayload.sourceOrgId || thread.account.ownerOrgId;
               tripPayload.destinationOrgId = tripPayload.destinationOrgId || thread.account.counterpartyOrgId;
             } else {
-              // Fallback to thread orgs (normalized order, may need frontend to specify direction)
               tripPayload.sourceOrgId = tripPayload.sourceOrgId || thread.orgId;
               tripPayload.destinationOrgId = tripPayload.destinationOrgId || thread.counterpartyOrgId;
             }
           }
         }
 
-        const trip = await tripService.createTrip(tripPayload, userId);
-        // ✅ Send trip as a card INSIDE this org-pair chat
+        const trip = await tripService.createTrip(tripPayload as any, userId);
         await chatService.sendTripCard(threadId, trip, userId);
         result = trip;
         break;
       }
 
-      // ────────── PAYMENT ACTIONS (GPay-like, real ledger) ──────────
+      // ────────── PAYMENT ACTIONS ──────────
       case 'REQUEST_PAYMENT': {
-        const payment = await ledgerService.createPaymentRequest(payload, userId);
-        result = payment;
+        result = await ledgerService.createPaymentRequest(payload as any, userId);
         break;
       }
 
       case 'MARK_PAYMENT_PAID': {
-        const paidResult = await ledgerService.markPaymentAsPaid(payload, userId);
-        result = paidResult;
+        result = await ledgerService.markPaymentAsPaid(payload as any, userId);
         break;
       }
 
       case 'CONFIRM_PAYMENT': {
-        const confirmResult = await ledgerService.confirmPayment(payload, userId);
-        result = confirmResult;
+        result = await ledgerService.confirmPayment(payload as any, userId);
         break;
       }
 
       case 'DISPUTE_PAYMENT': {
-        const disputeResult = await ledgerService.disputePayment(payload, userId);
-        result = disputeResult;
+        result = await ledgerService.disputePayment(payload as any, userId);
         break;
       }
 
       // ────────── INVOICE ACTIONS ──────────
       case 'CREATE_INVOICE': {
-        const invoice = await ledgerService.createInvoice(payload, userId);
-        result = invoice;
+        result = await ledgerService.createInvoice(payload as any, userId);
         break;
       }
 
-      // ────────── DATA ACTIONS (Excel-like) ──────────
+      // ────────── DATA ACTIONS ──────────
       case 'SHARE_DATA_GRID': {
         await chatService.sendDataGrid(threadId, payload.title, payload.rows, userId);
-        result = { success: true, message: 'Data grid shared' };
+        result = { message: 'Data grid shared' };
         break;
       }
 
@@ -266,13 +306,9 @@ export class ChatController {
           Balance: `₹${Number(entry.balance).toLocaleString('en-IN')}`,
         }));
         await chatService.sendDataGrid(threadId, 'Ledger Timeline', rows, userId);
-        result = { success: true, entries: timeline.entries.length };
+        result = { entries: timeline.entries.length };
         break;
       }
-
-      default:
-        res.status(400).json({ success: false, message: `Unknown action: ${actionType}` });
-        return;
     }
 
     res.json({

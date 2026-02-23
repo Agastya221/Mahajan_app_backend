@@ -14,25 +14,6 @@ const trackingController = new TrackingController();
  */
 router.post('/ping', authenticate, requireRole(UserRole.DRIVER), trackingController.ping);
 
-/**
- * @route   GET /api/v1/tracking/trips/:tripId/locations
- * @desc    Get location history for a trip
- * @access  Private
- */
-router.get('/trips/:tripId/locations', authenticate, trackingController.getLocationHistory);
 
-/**
- * @route   GET /api/v1/tracking/trips/:tripId/latest
- * @desc    Get latest location for a trip
- * @access  Private
- */
-router.get('/trips/:tripId/latest', authenticate, trackingController.getLatestLocation);
-
-/**
- * @route   GET /api/v1/tracking/drivers/:driverId/active-trips
- * @desc    Get active trips for a driver
- * @access  Private (Driver only)
- */
-router.get('/drivers/:driverId/active-trips', authenticate, trackingController.getActiveTrips);
 
 export default router;

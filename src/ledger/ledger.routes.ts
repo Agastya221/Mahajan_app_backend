@@ -80,25 +80,12 @@ router.get('/accounts/:accountId/payments', authenticate, ledgerController.getPa
 router.post('/payments/request', authenticate, ledgerController.createPaymentRequest);
 
 /**
- * @route   POST /api/v1/ledger/payments/mark-paid
- * @desc    Mark payment as paid (sender marks)
+ * @route   PATCH /api/v1/ledger/payments/:paymentId
+ * @desc    Update payment status (mark-paid, confirm, dispute)
  * @access  Private
+ * @body    { status: 'PAID' | 'CONFIRMED' | 'DISPUTED' }
  */
-router.post('/payments/mark-paid', authenticate, ledgerController.markPaymentAsPaid);
-
-/**
- * @route   POST /api/v1/ledger/payments/confirm
- * @desc    Confirm payment received (receiver confirms)
- * @access  Private
- */
-router.post('/payments/confirm', authenticate, ledgerController.confirmPayment);
-
-/**
- * @route   POST /api/v1/ledger/payments/dispute
- * @desc    Dispute payment (receiver disputes)
- * @access  Private
- */
-router.post('/payments/dispute', authenticate, ledgerController.disputePayment);
+router.patch('/payments/:paymentId', authenticate, ledgerController.updatePaymentStatus);
 
 /**
  * @route   GET /api/v1/ledger/accounts/:accountId/pending-payments

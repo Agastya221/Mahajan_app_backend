@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { LedgerService } from './ledger.service';
 import {
   createAccountSchema,
@@ -193,6 +193,25 @@ export class LedgerController {
       data: result,
       message: 'Payment disputed',
     });
+  });
+
+  // Unified PATCH route handler for /payments/:paymentId
+  updatePaymentStatus = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { paymentId } = req.params;
+    const { status } = req.body;
+
+    // Inject paymentId into body so validation schemas inside individual methods work
+    req.body.paymentId = paymentId;
+
+    if (status === 'PAID') {
+      return this.markPaymentAsPaid(req, res, next);
+    } else if (status === 'CONFIRMED') {
+      return this.confirmPayment(req, res, next);
+    } else if (status === 'DISPUTED') {
+      return this.disputePayment(req, res, next);
+    } else {
+      res.status(400).json({ success: false, message: 'Invalid status update' });
+    }
   });
 
   // Get pending payments for an account

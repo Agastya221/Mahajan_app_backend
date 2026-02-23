@@ -20,12 +20,7 @@ router.post('/', authenticate, orgController.createOrg);
  */
 router.get('/', authenticate, orgController.getUserOrgs);
 
-/**
- * @route   GET /api/v1/orgs/search
- * @desc    Search orgs by name, phone, or owner name (for autocomplete)
- * @access  Private
- */
-router.get('/search', authenticate, orgController.searchOrgs);
+
 
 /**
  * @route   GET /api/v1/orgs/:orgId

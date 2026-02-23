@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { TripController } from './trip.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { TrackingController } from '../tracking/tracking.controller';
 
 const router = Router();
 const tripController = new TripController();
+const trackingController = new TrackingController();
+
+// ════════════════════════════════════════════
+// TRIPS
+// ════════════════════════════════════════════
 
 /**
  * @route   POST /api/v1/trips
@@ -28,44 +34,42 @@ router.get('/:tripId', authenticate, tripController.getTripById);
 
 /**
  * @route   PATCH /api/v1/trips/:tripId
- * @desc    Edit trip details (points, notes, addresses, estimates)
- * @access  Private (source or dest org member)
+ * @desc    Unified patch endpoint (edit, change status, cancel, modify driver)
+ * @access  Private (source or dest org member depending on action)
+ * @body    { status?, cancelReason?, startPoint?, driverPhone?, etc }
  */
-router.patch('/:tripId', authenticate, tripController.editTrip);
+router.patch('/:tripId', authenticate, tripController.updateTrip);
+
+// ════════════════════════════════════════════
+// TRIP DOCUMENTS / CARDS / LOCATIONS
+// ════════════════════════════════════════════
 
 /**
- * @route   PATCH /api/v1/trips/:tripId/status
- * @desc    Update trip status
+ * @route   GET /api/v1/trips/:tripId/locations
+ * @desc    Get location history for a trip
  * @access  Private
  */
-router.patch('/:tripId/status', authenticate, tripController.updateTripStatus);
+router.get('/:tripId/locations', authenticate, trackingController.getLocationHistory);
 
 /**
- * @route   POST /api/v1/trips/:tripId/cancel
- * @desc    Soft cancel a trip (source org only, before IN_TRANSIT)
- * @access  Private (source org member only)
+ * @route   GET /api/v1/trips/:tripId/latest
+ * @desc    Get latest location for a trip
+ * @access  Private
  */
-router.post('/:tripId/cancel', authenticate, tripController.cancelTrip);
+router.get('/:tripId/latest', authenticate, trackingController.getLatestLocation);
 
 /**
- * @route   POST /api/v1/trips/:tripId/change-driver
- * @desc    Change driver/truck mid-trip (breakdown scenario)
- * @access  Private (source org member only)
- */
-router.post('/:tripId/change-driver', authenticate, tripController.changeTripDriver);
-
-/**
- * @route   POST /api/v1/trips/:tripId/load-card
+ * @route   POST /api/v1/trips/:tripId/load-cards
  * @desc    Create load card for trip
  * @access  Private (Source Mahajan only)
  */
-router.post('/:tripId/load-card', authenticate, tripController.createLoadCard);
+router.post('/:tripId/load-cards', authenticate, tripController.createLoadCard);
 
 /**
- * @route   POST /api/v1/trips/:tripId/receive-card
+ * @route   POST /api/v1/trips/:tripId/receive-cards
  * @desc    Create receive card for trip
  * @access  Private (Destination Mahajan only)
  */
-router.post('/:tripId/receive-card', authenticate, tripController.createReceiveCard);
+router.post('/:tripId/receive-cards', authenticate, tripController.createReceiveCard);
 
 export default router;

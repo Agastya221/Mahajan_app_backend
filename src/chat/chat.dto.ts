@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { ChatMessageType } from '@prisma/client';
 
-// ✅ NEW: Thread creation is now by org pair, not by trip
+// ✅ Thread creation — org-pair architecture
 // Accepts counterpartyOrgId directly, or resolves org pair from accountId/tripId
 export const createThreadSchema = z.object({
   counterpartyOrgId: z.string().cuid('Invalid org ID').optional(),
   accountId: z.string().cuid('Invalid account ID').optional(),
-  tripId: z.string().cuid('Invalid trip ID').optional(), // Resolves org pair from trip
+  tripId: z.string().cuid('Invalid trip ID').optional(),
 }).refine(
   (data) => data.counterpartyOrgId || data.accountId || data.tripId,
   {
@@ -14,24 +14,35 @@ export const createThreadSchema = z.object({
   }
 );
 
+// ✅ v3: Unified PATCH — pin, archive, read, delivered all in one endpoint
+export const updateThreadSchema = z.object({
+  isPinned: z.boolean().optional(),
+  isArchived: z.boolean().optional(),
+  markAsRead: z.boolean().optional(),       // true = mark all messages as read
+  markAsDelivered: z.boolean().optional(),   // true = mark all messages as delivered
+}).refine(
+  (data) => data.isPinned !== undefined || data.isArchived !== undefined || data.markAsRead || data.markAsDelivered,
+  {
+    message: 'At least one of isPinned, isArchived, markAsRead, or markAsDelivered must be provided',
+  }
+);
+
+// ✅ Send message — optional tripId for trip context
 export const sendMessageSchema = z.object({
   content: z.string().max(5000).optional(),
   messageType: z.nativeEnum(ChatMessageType).default('TEXT'),
   attachmentIds: z.array(z.string().cuid()).max(10).optional(),
   replyToId: z.string().cuid().optional(),
   clientMessageId: z.string().optional(),
-  tripId: z.string().cuid().optional(), // ✅ NEW: Optional trip context for this message
+  tripId: z.string().cuid().optional(),
 }).refine(
   (data) => {
-    // TEXT messages need content
     if (data.messageType === 'TEXT') {
       return data.content && data.content.trim().length > 0;
     }
-    // IMAGE, PDF, FILE, AUDIO messages need attachments
     if (['IMAGE', 'PDF', 'FILE', 'AUDIO'].includes(data.messageType)) {
       return data.attachmentIds && data.attachmentIds.length > 0;
     }
-    // Other types (SYSTEM, PAYMENT, etc.) handled internally
     return true;
   },
   {
@@ -39,5 +50,28 @@ export const sendMessageSchema = z.object({
   }
 );
 
+// ✅ Search messages
+export const searchMessagesSchema = z.object({
+  orgId: z.string().cuid('Invalid org ID'),
+  q: z.string().min(1, 'Search query is required'),
+});
+
+// ✅ Chat action — rich actions inside conversation
+export const chatActionSchema = z.object({
+  actionType: z.enum([
+    'CREATE_TRIP',
+    'REQUEST_PAYMENT',
+    'MARK_PAYMENT_PAID',
+    'CONFIRM_PAYMENT',
+    'DISPUTE_PAYMENT',
+    'CREATE_INVOICE',
+    'SHARE_DATA_GRID',
+    'SHARE_LEDGER_TIMELINE',
+  ]),
+  payload: z.record(z.string(), z.any()),
+});
+
 export type CreateThreadDto = z.infer<typeof createThreadSchema>;
+export type UpdateThreadDto = z.infer<typeof updateThreadSchema>;
 export type SendMessageDto = z.infer<typeof sendMessageSchema>;
+export type ChatActionDto = z.infer<typeof chatActionSchema>;

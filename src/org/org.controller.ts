@@ -18,6 +18,17 @@ export class OrgController {
   });
 
   getUserOrgs = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { search } = req.query;
+
+    // Handle global search if ?search= is provided
+    if (search) {
+      if ((search as string).length < 2) {
+        return res.json({ success: true, data: [] });
+      }
+      const orgs = await orgService.searchOrgs(search as string);
+      return res.json({ success: true, data: orgs });
+    }
+
     const orgs = await orgService.getUserOrgs(req.user!.id);
 
     res.json({
@@ -33,25 +44,6 @@ export class OrgController {
     res.json({
       success: true,
       data: org,
-    });
-  });
-
-  searchOrgs = asyncHandler(async (req: Request, res: Response) => {
-    const { query } = req.query as { query: string };
-
-    if (!query || query.length < 2) {
-      res.json({
-        success: true,
-        data: [],
-      });
-      return;
-    }
-
-    const orgs = await orgService.searchOrgs(query);
-
-    res.json({
-      success: true,
-      data: orgs,
     });
   });
 

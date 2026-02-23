@@ -5,16 +5,20 @@ import { authenticate } from '../middleware/auth.middleware';
 const router = Router();
 const chatController = new ChatController();
 
+// ════════════════════════════════════════════
+// THREADS
+// ════════════════════════════════════════════
+
 /**
  * @route   POST /api/v1/chat/threads
- * @desc    Create or get chat thread
+ * @desc    Create or get org-pair chat thread
  * @access  Private
  */
 router.post('/threads', authenticate, chatController.createThread);
 
 /**
  * @route   GET /api/v1/chat/threads
- * @desc    Get all chat threads for user
+ * @desc    List all chat threads for the current user
  * @access  Private
  */
 router.get('/threads', authenticate, chatController.getThreads);
@@ -25,6 +29,18 @@ router.get('/threads', authenticate, chatController.getThreads);
  * @access  Private
  */
 router.get('/threads/:threadId', authenticate, chatController.getThreadById);
+
+/**
+ * @route   PATCH /api/v1/chat/threads/:threadId
+ * @desc    Update thread state (pin, archive, mark read, mark delivered)
+ * @access  Private
+ * @body    { isPinned?, isArchived?, markAsRead?, markAsDelivered? }
+ */
+router.patch('/threads/:threadId', authenticate, chatController.updateThread);
+
+// ════════════════════════════════════════════
+// MESSAGES
+// ════════════════════════════════════════════
 
 /**
  * @route   GET /api/v1/chat/threads/:threadId/messages
@@ -40,33 +56,9 @@ router.get('/threads/:threadId/messages', authenticate, chatController.getMessag
  */
 router.post('/threads/:threadId/messages', authenticate, chatController.sendMessage);
 
-/**
- * @route   POST /api/v1/chat/threads/:threadId/read
- * @desc    Mark messages as read
- * @access  Private
- */
-router.post('/threads/:threadId/read', authenticate, chatController.markAsRead);
-
-/**
- * @route   POST /api/v1/chat/threads/:threadId/delivered
- * @desc    Mark messages as delivered (single tick)
- * @access  Private
- */
-router.post('/threads/:threadId/delivered', authenticate, chatController.markAsDelivered);
-
-/**
- * @route   POST /api/v1/chat/threads/:threadId/pin
- * @desc    Pin/unpin thread
- * @access  Private
- */
-router.post('/threads/:threadId/pin', authenticate, chatController.togglePin);
-
-/**
- * @route   POST /api/v1/chat/threads/:threadId/archive
- * @desc    Archive/unarchive thread
- * @access  Private
- */
-router.post('/threads/:threadId/archive', authenticate, chatController.toggleArchive);
+// ════════════════════════════════════════════
+// SEARCH & UNREAD
+// ════════════════════════════════════════════
 
 /**
  * @route   GET /api/v1/chat/unread
@@ -76,17 +68,21 @@ router.post('/threads/:threadId/archive', authenticate, chatController.toggleArc
 router.get('/unread', authenticate, chatController.getUnreadCounts);
 
 /**
- * @route   GET /api/v1/chat/search
- * @desc    Search messages in org
+ * @route   GET /api/v1/chat/messages
+ * @desc    Search messages across threads (?orgId=xxx&q=payment)
  * @access  Private
  */
-router.get('/search', authenticate, chatController.searchMessages);
+router.get('/messages', authenticate, chatController.searchMessages);
+
+// ════════════════════════════════════════════
+// ACTIONS — Rich actions inside conversation
+// ════════════════════════════════════════════
 
 /**
- * @route   POST /api/v1/chat/threads/:threadId/action
- * @desc    Perform rich actions (Create Trip, Request Payment, Share Data) within chat
+ * @route   POST /api/v1/chat/threads/:threadId/actions
+ * @desc    Perform rich actions (Create Trip, Request Payment, Share Data, etc.)
  * @access  Private
  */
-router.post('/threads/:threadId/action', authenticate, chatController.performAction);
+router.post('/threads/:threadId/actions', authenticate, chatController.performAction);
 
 export default router;
