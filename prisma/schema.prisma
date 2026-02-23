@@ -164,7 +164,8 @@ model Org {
   accountsAsOwner        Account[] @relation("AccountOwnerOrg")
   accountsAsCounterparty Account[] @relation("AccountCounterpartyOrg")
 
-  chatThreads ChatThread[]
+  chatThreadsAsOrg          ChatThread[] @relation("ChatOrgA")
+  chatThreadsAsCounterparty ChatThread[] @relation("ChatCounterpartyOrg")
   
   // ✅ NEW: Item Master & Export Logs
   items      Item[]
@@ -363,7 +364,7 @@ model Trip {
   invoices       Invoice[]
   payments       Payment[]
   ledgerEntries  LedgerEntry[]
-  chatThreads    ChatThread[]
+  chatMessages   ChatMessage[] @relation("TripMessages")
   driverPayment  DriverPayment?
 
   @@index([sourceOrgId, status, createdAt])
@@ -728,17 +729,24 @@ model Dispute {
 // CHAT MODELS
 // ============================================
 
+// ✅ ARCHITECTURE: One chat per org pair (like WhatsApp conversations)
+// Trips appear as contextual message cards inside this single chat
 model ChatThread {
-  id        String @id @default(cuid())
-  orgId     String
-  org       Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  accountId String?
-  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  tripId    String?
-  trip      Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  id                String @id @default(cuid())
+
+  // The two organizations in this conversation
+  // Always stored with smaller cuid as orgId for consistent lookups
+  orgId             String
+  org               Org    @relation("ChatOrgA", fields: [orgId], references: [id], onDelete: Cascade)
+  counterpartyOrgId String
+  counterpartyOrg   Org    @relation("ChatCounterpartyOrg", fields: [counterpartyOrgId], references: [id], onDelete: Cascade)
+
+  // Optional link to Account (for financial context)
+  accountId         String? @unique
+  account           Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   title           String?
-  type            String  @default("GENERAL")
+  type            String  @default("ORG_CHAT")
   lastMessageAt   DateTime?
   lastMessageText String?
   unreadCount     Int @default(0)
@@ -751,13 +759,13 @@ model ChatThread {
 
   messages         ChatMessage[]
 
-  @@unique([accountId])
-  @@unique([tripId])
+  @@unique([orgId, counterpartyOrgId])  // One chat per org pair
   @@index([orgId, updatedAt])
   @@index([orgId, lastMessageAt])
   @@index([orgId, isPinned, lastMessageAt])
+  @@index([counterpartyOrgId, updatedAt])
+  @@index([counterpartyOrgId, lastMessageAt])
   @@index([accountId, updatedAt])
-  @@index([tripId, updatedAt])
 }
 
 model ChatMessage {
@@ -794,6 +802,10 @@ model ChatMessage {
 
   attachments Attachment[]
 
+  // ✅ NEW: Optional trip context (trip cards, status updates appear in org-pair chat)
+  tripId    String?
+  trip      Trip?    @relation("TripMessages", fields: [tripId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@index([threadId, createdAt])
@@ -801,6 +813,7 @@ model ChatMessage {
 
   @@index([paymentId])
   @@index([invoiceId])
+  @@index([tripId])
   @@index([senderUserId, createdAt])
   @@index([threadId, isRead, senderUserId])
   @@index([threadId, senderUserId, isRead])

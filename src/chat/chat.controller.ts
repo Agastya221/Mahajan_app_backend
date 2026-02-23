@@ -24,11 +24,9 @@ export class ChatController {
   });
 
   getThreads = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { accountId, tripId, page, limit } = req.query;
+    const { page, limit } = req.query;
 
     const result = await chatService.getThreads(req.user!.id, {
-      accountId: accountId as string | undefined,
-      tripId: tripId as string | undefined,
       page: page ? parseInt(page as string, 10) : undefined,
       limit: limit ? parseInt(limit as string, 10) : undefined,
     });
@@ -157,8 +155,8 @@ export class ChatController {
 
   // ============================================
   // ✅ SUPER APP: All-in-one chat action hub
-  // Users perform REAL actions from within the chat.
-  // Each action calls the real service AND posts a rich card.
+  // Actions happen INSIDE the org-pair chat.
+  // Trips, payments, invoices all live in one conversation.
   // ============================================
   performAction = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
@@ -175,15 +173,16 @@ export class ChatController {
     switch (actionType) {
       // ────────── TRIP ACTIONS ──────────
       case 'CREATE_TRIP': {
-        // ✅ SMART AUTO-DETECTION: If creating trip from account-based chat,
-        // automatically detect source & destination from the account relationship
+        // ✅ SMART AUTO-DETECTION: Thread knows both orgs
         let tripPayload = { ...payload };
 
         if (!tripPayload.sourceOrgId || !tripPayload.destinationOrgId) {
-          // Fetch thread to get account context
+          // Fetch thread to get org pair directly
           const thread = await prisma.chatThread.findUnique({
             where: { id: threadId },
-            include: {
+            select: {
+              orgId: true,
+              counterpartyOrgId: true,
               account: {
                 select: {
                   ownerOrgId: true,
@@ -193,14 +192,21 @@ export class ChatController {
             },
           });
 
-          if (thread?.account) {
-            // Auto-fill missing org IDs from account
-            tripPayload.sourceOrgId = tripPayload.sourceOrgId || thread.account.ownerOrgId;
-            tripPayload.destinationOrgId = tripPayload.destinationOrgId || thread.account.counterpartyOrgId;
+          if (thread) {
+            // Use account relationship if available (preserves owner/counterparty semantics)
+            if (thread.account) {
+              tripPayload.sourceOrgId = tripPayload.sourceOrgId || thread.account.ownerOrgId;
+              tripPayload.destinationOrgId = tripPayload.destinationOrgId || thread.account.counterpartyOrgId;
+            } else {
+              // Fallback to thread orgs (normalized order, may need frontend to specify direction)
+              tripPayload.sourceOrgId = tripPayload.sourceOrgId || thread.orgId;
+              tripPayload.destinationOrgId = tripPayload.destinationOrgId || thread.counterpartyOrgId;
+            }
           }
         }
 
         const trip = await tripService.createTrip(tripPayload, userId);
+        // ✅ Send trip as a card INSIDE this org-pair chat
         await chatService.sendTripCard(threadId, trip, userId);
         result = trip;
         break;
@@ -208,33 +214,24 @@ export class ChatController {
 
       // ────────── PAYMENT ACTIONS (GPay-like, real ledger) ──────────
       case 'REQUEST_PAYMENT': {
-        // payload: { accountId, amount, tag?, remarks?, invoiceId? }
-        // This calls the REAL LedgerService — creates actual payment record
-        // LedgerService auto-posts PAYMENT_REQUEST card to chat
         const payment = await ledgerService.createPaymentRequest(payload, userId);
         result = payment;
         break;
       }
 
       case 'MARK_PAYMENT_PAID': {
-        // payload: { paymentId, mode, utrNumber?, proofNote?, attachmentIds? }
-        // Debtor marks payment as paid — LedgerService auto-posts update card
         const paidResult = await ledgerService.markPaymentAsPaid(payload, userId);
         result = paidResult;
         break;
       }
 
       case 'CONFIRM_PAYMENT': {
-        // payload: { paymentId }
-        // Creditor confirms — ledger updated, balance adjusted, card posted
         const confirmResult = await ledgerService.confirmPayment(payload, userId);
         result = confirmResult;
         break;
       }
 
       case 'DISPUTE_PAYMENT': {
-        // payload: { paymentId, reason }
-        // Creditor disputes — card posted, ledger NOT updated
         const disputeResult = await ledgerService.disputePayment(payload, userId);
         result = disputeResult;
         break;
@@ -242,8 +239,6 @@ export class ChatController {
 
       // ────────── INVOICE ACTIONS ──────────
       case 'CREATE_INVOICE': {
-        // payload: { accountId, invoiceNumber, amount, description?, dueDate?, attachmentIds? }
-        // Creates real invoice + ledger entry — LedgerService auto-posts INVOICE_CARD
         const invoice = await ledgerService.createInvoice(payload, userId);
         result = invoice;
         break;
@@ -251,15 +246,12 @@ export class ChatController {
 
       // ────────── DATA ACTIONS (Excel-like) ──────────
       case 'SHARE_DATA_GRID': {
-        // payload: { title: string, rows: any[] }
         await chatService.sendDataGrid(threadId, payload.title, payload.rows, userId);
         result = { success: true, message: 'Data grid shared' };
         break;
       }
 
       case 'SHARE_LEDGER_TIMELINE': {
-        // payload: { accountId }
-        // Auto-fetches real ledger data and posts as an interactive DATA_GRID
         const timeline = await ledgerService.getLedgerTimeline(
           payload.accountId,
           userId,

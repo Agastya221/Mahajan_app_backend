@@ -3,150 +3,97 @@ import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors'
 import { CreateThreadDto, SendMessageDto } from './chat.dto';
 import { redisPublisher } from '../config/redis';
 import { Prisma } from '@prisma/client';
+import { logger } from '../utils/logger';
+
+// ✅ Helper: Normalize org pair ordering for consistent unique lookups
+// Always stores the smaller cuid as orgId to prevent (A,B) vs (B,A) duplicates
+function normalizeOrgPair(orgAId: string, orgBId: string): [string, string] {
+  return orgAId < orgBId ? [orgAId, orgBId] : [orgBId, orgAId];
+}
 
 export class ChatService {
-  async createOrGetThread(data: CreateThreadDto, userId: string) {
-    if (data.accountId) {
-      return this.createOrGetAccountThread(data.accountId, userId);
-    } else if (data.tripId) {
-      return this.createOrGetTripThread(data.tripId, userId);
-    }
 
-    throw new ValidationError('Either accountId or tripId must be provided');
-  }
+  // ============================================
+  // ✅ CORE: Find or create org-pair thread
+  // This is the single source of truth for thread creation
+  // ============================================
+  private async findOrCreateOrgPairThread(
+    orgAId: string,
+    orgBId: string,
+    options?: { accountId?: string; include?: any }
+  ) {
+    const [firstOrgId, secondOrgId] = normalizeOrgPair(orgAId, orgBId);
 
-  private async createOrGetAccountThread(accountId: string, userId: string) {
-    // Verify account exists and user has access
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-    });
-
-    if (!account) {
-      throw new NotFoundError('Account not found');
-    }
-
-    const hasAccess = await prisma.orgMember.findFirst({
-      where: {
-        userId,
-        orgId: { in: [account.ownerOrgId, account.counterpartyOrgId] },
-      },
-    });
-
-    if (!hasAccess) {
-      throw new ForbiddenError('Not authorized to access this account');
-    }
-
-    const threadInclude = {
+    const includeClause = options?.include || {
+      org: { select: { id: true, name: true, gstin: true } },
+      counterpartyOrg: { select: { id: true, name: true, gstin: true } },
       account: {
-        include: {
-          ownerOrg: {
-            select: { id: true, name: true, gstin: true },
-          },
-          counterpartyOrg: {
-            select: { id: true, name: true, gstin: true },
-          },
+        select: {
+          id: true,
+          ownerOrgId: true,
+          counterpartyOrgId: true,
+          balance: true,
         },
       },
     };
 
-    // Check if thread already exists
-    const existing = await prisma.chatThread.findUnique({
-      where: { accountId },
-      include: threadInclude,
-    });
-
-    if (existing) {
-      return { thread: existing, isNew: false };
-    }
-
-    // Create new thread (handle race condition with try/catch outside transaction)
-    try {
-      const thread = await prisma.chatThread.create({
-        data: {
-          orgId: account.ownerOrgId,
-          accountId,
-        },
-        include: threadInclude,
-      });
-      return { thread, isNew: true };
-    } catch (error: any) {
-      // If unique constraint violation (race condition), fetch existing
-      if (error.code === 'P2002') {
-        const raceThread = await prisma.chatThread.findUnique({
-          where: { accountId },
-          include: threadInclude,
-        });
-        if (!raceThread) {
-          throw new Error('Thread creation failed and existing thread not found');
-        }
-        return { thread: raceThread, isNew: false };
-      }
-      throw error;
-    }
-  }
-
-  private async createOrGetTripThread(tripId: string, userId: string) {
-    // Verify trip exists and user has access
-    const trip = await prisma.trip.findUnique({
-      where: { id: tripId },
-    });
-
-    if (!trip) {
-      throw new NotFoundError('Trip not found');
-    }
-
-    const hasAccess = await prisma.orgMember.findFirst({
+    // Try to find existing thread
+    let thread = await prisma.chatThread.findUnique({
       where: {
-        userId,
-        orgId: { in: [trip.sourceOrgId, trip.destinationOrgId] },
-      },
-    });
-
-    if (!hasAccess) {
-      throw new ForbiddenError('Not authorized to access this trip');
-    }
-
-    const tripThreadInclude = {
-      trip: {
-        include: {
-          sourceOrg: {
-            select: { id: true, name: true },
-          },
-          destinationOrg: {
-            select: { id: true, name: true },
-          },
+        orgId_counterpartyOrgId: {
+          orgId: firstOrgId,
+          counterpartyOrgId: secondOrgId,
         },
       },
-    };
-
-    // Check if thread already exists
-    const existing = await prisma.chatThread.findUnique({
-      where: { tripId },
-      include: tripThreadInclude,
+      include: includeClause,
     });
 
-    if (existing) {
-      return { thread: existing, isNew: false };
+    if (thread) {
+      // Optionally link account if not already linked
+      if (options?.accountId && !thread.accountId) {
+        thread = await prisma.chatThread.update({
+          where: { id: thread.id },
+          data: { accountId: options.accountId },
+          include: includeClause,
+        });
+      }
+      return { thread, isNew: false };
     }
 
-    // Create new thread (handle race condition with try/catch outside transaction)
+    // Create new thread (with race condition handling)
     try {
-      const thread = await prisma.chatThread.create({
+      thread = await prisma.chatThread.create({
         data: {
-          orgId: trip.sourceOrgId,
-          tripId,
+          orgId: firstOrgId,
+          counterpartyOrgId: secondOrgId,
+          accountId: options?.accountId || null,
         },
-        include: tripThreadInclude,
+        include: includeClause,
       });
       return { thread, isNew: true };
     } catch (error: any) {
       if (error.code === 'P2002') {
+        // Race condition: another request created it first
         const raceThread = await prisma.chatThread.findUnique({
-          where: { tripId },
-          include: tripThreadInclude,
+          where: {
+            orgId_counterpartyOrgId: {
+              orgId: firstOrgId,
+              counterpartyOrgId: secondOrgId,
+            },
+          },
+          include: includeClause,
         });
         if (!raceThread) {
           throw new Error('Thread creation failed and existing thread not found');
+        }
+        // Link account if needed
+        if (options?.accountId && !raceThread.accountId) {
+          const updated = await prisma.chatThread.update({
+            where: { id: raceThread.id },
+            data: { accountId: options.accountId },
+            include: includeClause,
+          });
+          return { thread: updated, isNew: false };
         }
         return { thread: raceThread, isNew: false };
       }
@@ -154,8 +101,110 @@ export class ChatService {
     }
   }
 
-  async getThreads(userId: string, filters?: { accountId?: string; tripId?: string; page?: number; limit?: number }) {
-    // Get all orgs user is member of
+  // ============================================
+  // ✅ Create or get thread (API entry point)
+  // Accepts: counterpartyOrgId, accountId, or tripId
+  // ============================================
+  async createOrGetThread(data: CreateThreadDto, userId: string) {
+    // Determine the org pair
+    let orgAId: string;
+    let orgBId: string;
+    let accountId: string | undefined;
+
+    // Get user's org memberships
+    const memberships = await prisma.orgMember.findMany({
+      where: { userId },
+      select: { orgId: true },
+    });
+    const userOrgIds = memberships.map(m => m.orgId);
+
+    if (userOrgIds.length === 0) {
+      throw new ForbiddenError('User is not a member of any organization');
+    }
+
+    if (data.counterpartyOrgId) {
+      // Direct org pair — verify user belongs to one of them
+      if (userOrgIds.includes(data.counterpartyOrgId)) {
+        throw new ValidationError('Cannot create a chat with your own organization');
+      }
+      // User's org is the first one that matches
+      orgAId = userOrgIds[0]; // Primary org
+      orgBId = data.counterpartyOrgId;
+
+      // Verify counterparty org exists
+      const counterpartyOrg = await prisma.org.findUnique({
+        where: { id: data.counterpartyOrgId },
+      });
+      if (!counterpartyOrg) {
+        throw new NotFoundError('Counterparty organization not found');
+      }
+
+      // Check if there's an account between these orgs, to auto-link
+      const account = await prisma.account.findFirst({
+        where: {
+          OR: [
+            { ownerOrgId: orgAId, counterpartyOrgId: orgBId },
+            { ownerOrgId: orgBId, counterpartyOrgId: orgAId },
+          ],
+        },
+      });
+      accountId = account?.id;
+
+    } else if (data.accountId) {
+      // Resolve from account
+      const account = await prisma.account.findUnique({
+        where: { id: data.accountId },
+      });
+      if (!account) throw new NotFoundError('Account not found');
+
+      // Verify user has access
+      const hasAccess = userOrgIds.some(
+        orgId => orgId === account.ownerOrgId || orgId === account.counterpartyOrgId
+      );
+      if (!hasAccess) throw new ForbiddenError('Not authorized to access this account');
+
+      orgAId = account.ownerOrgId;
+      orgBId = account.counterpartyOrgId;
+      accountId = account.id;
+
+    } else if (data.tripId) {
+      // Resolve from trip (backward compat — frontend can still pass tripId)
+      const trip = await prisma.trip.findUnique({
+        where: { id: data.tripId },
+      });
+      if (!trip) throw new NotFoundError('Trip not found');
+
+      // Verify user has access
+      const hasAccess = userOrgIds.some(
+        orgId => orgId === trip.sourceOrgId || orgId === trip.destinationOrgId
+      );
+      if (!hasAccess) throw new ForbiddenError('Not authorized to access this trip');
+
+      orgAId = trip.sourceOrgId;
+      orgBId = trip.destinationOrgId;
+
+      // Check if there's an account between these orgs
+      const account = await prisma.account.findFirst({
+        where: {
+          OR: [
+            { ownerOrgId: orgAId, counterpartyOrgId: orgBId },
+            { ownerOrgId: orgBId, counterpartyOrgId: orgAId },
+          ],
+        },
+      });
+      accountId = account?.id;
+
+    } else {
+      throw new ValidationError('counterpartyOrgId, accountId, or tripId is required');
+    }
+
+    return this.findOrCreateOrgPairThread(orgAId, orgBId, { accountId });
+  }
+
+  // ============================================
+  // ✅ Get all threads for user
+  // ============================================
+  async getThreads(userId: string, filters?: { page?: number; limit?: number }) {
     const memberships = await prisma.orgMember.findMany({
       where: { userId },
       select: { orgId: true },
@@ -167,37 +216,13 @@ export class ChatService {
       return { threads: [] as any[], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } };
     }
 
-    // ✅ TYPE SAFETY FIX: Use proper Prisma types instead of any
+    // Find threads where user's org is either side of the conversation
     const where: Prisma.ChatThreadWhereInput = {
-      OR: [],
+      OR: [
+        { orgId: { in: orgIds } },
+        { counterpartyOrgId: { in: orgIds } },
+      ],
     };
-
-    if (filters?.accountId) {
-      where.accountId = filters.accountId;
-    } else if (filters?.tripId) {
-      where.tripId = filters.tripId;
-    } else {
-      // Get threads for accounts where user's org is involved
-      where.OR = [
-        {
-          account: {
-            OR: [
-              { ownerOrgId: { in: orgIds } },
-              { counterpartyOrgId: { in: orgIds } },
-            ],
-          },
-        },
-        // Get threads for trips where user's org is involved
-        {
-          trip: {
-            OR: [
-              { sourceOrgId: { in: orgIds } },
-              { destinationOrgId: { in: orgIds } },
-            ],
-          },
-        },
-      ];
-    }
 
     const page = filters?.page || 1;
     const limit = Math.min(filters?.limit || 20, 100);
@@ -206,24 +231,18 @@ export class ChatService {
       prisma.chatThread.findMany({
         where,
         include: {
-          account: {
-            include: {
-              ownerOrg: {
-                select: { id: true, name: true, gstin: true },
-              },
-              counterpartyOrg: {
-                select: { id: true, name: true, gstin: true },
-              },
-            },
+          org: {
+            select: { id: true, name: true, gstin: true },
           },
-          trip: {
-            include: {
-              sourceOrg: {
-                select: { id: true, name: true },
-              },
-              destinationOrg: {
-                select: { id: true, name: true },
-              },
+          counterpartyOrg: {
+            select: { id: true, name: true, gstin: true },
+          },
+          account: {
+            select: {
+              id: true,
+              ownerOrgId: true,
+              counterpartyOrgId: true,
+              balance: true,
             },
           },
           messages: {
@@ -247,39 +266,25 @@ export class ChatService {
     };
   }
 
+  // ============================================
+  // ✅ Get thread by ID
+  // ============================================
   async getThreadById(threadId: string, userId: string) {
     const thread = await prisma.chatThread.findUnique({
       where: { id: threadId },
       include: {
-        account: {
-          include: {
-            ownerOrg: {
-              select: { id: true, name: true, gstin: true },
-            },
-            counterpartyOrg: {
-              select: { id: true, name: true, gstin: true },
-            },
-          },
+        org: {
+          select: { id: true, name: true, gstin: true },
         },
-        trip: {
-          include: {
-            sourceOrg: {
-              select: { id: true, name: true },
-            },
-            destinationOrg: {
-              select: { id: true, name: true },
-            },
-            driver: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
+        counterpartyOrg: {
+          select: { id: true, name: true, gstin: true },
+        },
+        account: {
+          select: {
+            id: true,
+            ownerOrgId: true,
+            counterpartyOrgId: true,
+            balance: true,
           },
         },
       },
@@ -289,139 +294,112 @@ export class ChatService {
       throw new NotFoundError('Chat thread not found');
     }
 
-    // Verify user has access
     await this.verifyThreadAccess(thread, userId);
-
     return thread;
   }
 
+  // ============================================
+  // ✅ Get messages (with trip context)
+  // ============================================
   async getMessages(threadId: string, userId: string, limit = 50, offset = 0) {
-    const thread = await this.getThreadById(threadId, userId);
+    await this.getThreadById(threadId, userId);
 
     const messages = await prisma.chatMessage.findMany({
       where: { threadId },
       include: {
         senderUser: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-          },
+          select: { id: true, name: true, phone: true },
         },
         attachments: {
           select: {
-            id: true,
-            url: true,
-            fileName: true,
-            mimeType: true,
-            sizeBytes: true,
-            type: true,
+            id: true, url: true, fileName: true,
+            mimeType: true, sizeBytes: true, type: true,
           },
         },
         replyTo: {
           select: {
-            id: true,
-            content: true,
-            messageType: true,
+            id: true, content: true, messageType: true,
             senderUser: { select: { id: true, name: true } },
             attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
           },
         },
         payment: {
-          select: {
-            id: true,
-            amount: true,
-            tag: true,
-            mode: true,
-            createdAt: true,
-          },
+          select: { id: true, amount: true, tag: true, mode: true, createdAt: true },
         },
         invoice: {
+          select: { id: true, invoiceNumber: true, total: true, createdAt: true },
+        },
+        // ✅ NEW: Include trip context for trip-related messages
+        trip: {
           select: {
-            id: true,
-            invoiceNumber: true,
-            total: true,
-            createdAt: true,
+            id: true, status: true, startPoint: true, endPoint: true,
+            notes: true, createdAt: true,
+            sourceOrg: { select: { id: true, name: true } },
+            destinationOrg: { select: { id: true, name: true } },
+            truck: { select: { id: true, number: true } },
+            driver: {
+              include: { user: { select: { id: true, name: true, phone: true } } },
+            },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,
     });
 
-    const total = await prisma.chatMessage.count({
-      where: { threadId },
-    });
+    const total = await prisma.chatMessage.count({ where: { threadId } });
 
     return {
-      messages: messages.reverse(), // Reverse to show oldest first
+      messages: messages.reverse(),
       pagination: {
-        total,
-        limit,
-        offset,
+        total, limit, offset,
         hasMore: offset + limit < total,
       },
     };
   }
 
-  async sendMessage(threadId: string, data: SendMessageDto & { metadata?: any }, userId: string) {
+  // ============================================
+  // ✅ Send message (supports trip context)
+  // ============================================
+  async sendMessage(threadId: string, data: SendMessageDto & { metadata?: any; tripId?: string }, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
 
-    // ✅ Idempotency Check: Return existing message if client sends same ID
+    // Idempotency check
     if (data.clientMessageId) {
       const existing = await prisma.chatMessage.findUnique({
         where: {
-          threadId_clientMessageId: {
-            threadId,
-            clientMessageId: data.clientMessageId,
-          },
+          threadId_clientMessageId: { threadId, clientMessageId: data.clientMessageId },
         },
         include: {
           senderUser: { select: { id: true, name: true, phone: true } },
           attachments: {
-            select: {
-              id: true,
-              url: true,
-              fileName: true,
-              mimeType: true,
-              sizeBytes: true,
-              type: true,
-            },
+            select: { id: true, url: true, fileName: true, mimeType: true, sizeBytes: true, type: true },
           },
           replyTo: {
             select: {
-              id: true,
-              content: true,
-              messageType: true,
+              id: true, content: true, messageType: true,
               senderUser: { select: { id: true, name: true } },
               attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
             },
           },
+          trip: { select: { id: true, status: true, startPoint: true, endPoint: true, notes: true } },
         },
       });
-
       if (existing) return existing;
     }
 
-    // Verify attachments exist and belong to user
+    // Verify attachments
     if (data.attachmentIds && data.attachmentIds.length > 0) {
       const attachments = await prisma.attachment.findMany({
-        where: {
-          id: { in: data.attachmentIds },
-          uploadedBy: userId,
-          status: 'COMPLETED',
-        },
+        where: { id: { in: data.attachmentIds }, uploadedBy: userId, status: 'COMPLETED' },
       });
-
       if (attachments.length !== data.attachmentIds.length) {
         throw new ValidationError('Some attachments not found, not uploaded by you, or still pending');
       }
     }
 
-    // Verify replyToId belongs to this thread
+    // Verify replyToId
     if (data.replyToId) {
       const replyMsg = await prisma.chatMessage.findFirst({
         where: { id: data.replyToId, threadId },
@@ -429,7 +407,7 @@ export class ChatService {
       if (!replyMsg) throw new ValidationError('Reply message not found in this thread');
     }
 
-    // Determine preview text for thread
+    // Preview text
     let previewText = data.content?.substring(0, 100) || '';
     if (data.messageType === 'IMAGE') previewText = '📷 Photo';
     else if (data.messageType === 'PDF') previewText = '📄 Document';
@@ -449,16 +427,13 @@ export class ChatService {
             metadata: data.metadata || Prisma.JsonNull,
             replyToId: data.replyToId || null,
             clientMessageId: data.clientMessageId || null,
+            tripId: data.tripId || null, // ✅ Trip context
           },
           include: {
-            senderUser: {
-              select: { id: true, name: true, phone: true },
-            },
+            senderUser: { select: { id: true, name: true, phone: true } },
             replyTo: {
               select: {
-                id: true,
-                content: true,
-                messageType: true,
+                id: true, content: true, messageType: true,
                 senderUser: { select: { id: true, name: true } },
               },
             },
@@ -467,7 +442,7 @@ export class ChatService {
 
         messageId = newMessage.id;
 
-        // Link attachments to message
+        // Link attachments
         if (data.attachmentIds && data.attachmentIds.length > 0) {
           await tx.attachment.updateMany({
             where: { id: { in: data.attachmentIds } },
@@ -491,32 +466,19 @@ export class ChatService {
 
       messageId = message.id;
     } catch (error: any) {
-      // ✅ Handle race condition: If message created in parallel
       if (error.code === 'P2002' && data.clientMessageId) {
         const existing = await prisma.chatMessage.findUnique({
           where: {
-            threadId_clientMessageId: {
-              threadId,
-              clientMessageId: data.clientMessageId,
-            },
+            threadId_clientMessageId: { threadId, clientMessageId: data.clientMessageId },
           },
           include: {
             senderUser: { select: { id: true, name: true, phone: true } },
             attachments: {
-              select: {
-                id: true,
-                url: true,
-                fileName: true,
-                mimeType: true,
-                sizeBytes: true,
-                type: true,
-              },
+              select: { id: true, url: true, fileName: true, mimeType: true, sizeBytes: true, type: true },
             },
             replyTo: {
               select: {
-                id: true,
-                content: true,
-                messageType: true,
+                id: true, content: true, messageType: true,
                 senderUser: { select: { id: true, name: true } },
                 attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
               },
@@ -528,40 +490,36 @@ export class ChatService {
       throw error;
     }
 
-    // Reload with attachments
+    // Reload with attachments + trip context
     const fullMessage = await prisma.chatMessage.findUnique({
       where: { id: messageId },
       include: {
         senderUser: { select: { id: true, name: true, phone: true } },
         attachments: {
-          select: {
-            id: true,
-            url: true,
-            fileName: true,
-            mimeType: true,
-            sizeBytes: true,
-            type: true,
-          },
+          select: { id: true, url: true, fileName: true, mimeType: true, sizeBytes: true, type: true },
         },
         replyTo: {
           select: {
-            id: true,
-            content: true,
-            messageType: true,
+            id: true, content: true, messageType: true,
             senderUser: { select: { id: true, name: true } },
             attachments: { select: { id: true, url: true, mimeType: true }, take: 1 },
+          },
+        },
+        trip: {
+          select: {
+            id: true, status: true, startPoint: true, endPoint: true, notes: true, createdAt: true,
+            sourceOrg: { select: { id: true, name: true } },
+            destinationOrg: { select: { id: true, name: true } },
           },
         },
       },
     });
 
-    // Broadcast via Redis WebSocket
+    // Broadcast via WebSocket
     try {
-      if (global.socketGateway) {
-        // Direct local broadcast (faster, works without Redis)
-        global.socketGateway.broadcastToChat(threadId, 'chat:message', fullMessage);
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:message', fullMessage);
       } else {
-        // Fallback or distributed setup
         await redisPublisher.publish(
           `thread:${threadId}:message`,
           JSON.stringify(fullMessage)
@@ -574,24 +532,14 @@ export class ChatService {
     return fullMessage;
   }
 
+  // ============================================
+  // ✅ Thread access verification (simplified — uses org pair directly)
+  // ============================================
   private async verifyThreadAccess(thread: any, userId: string) {
-    let orgIds: string[] = [];
-
-    if (thread.account) {
-      orgIds = [thread.account.ownerOrgId, thread.account.counterpartyOrgId];
-    } else if (thread.trip) {
-      orgIds = [thread.trip.sourceOrgId, thread.trip.destinationOrgId];
-    }
-
-    if (orgIds.length === 0) {
-      throw new ForbiddenError('Invalid thread');
-    }
+    const orgIds = [thread.orgId, thread.counterpartyOrgId];
 
     const hasAccess = await prisma.orgMember.findFirst({
-      where: {
-        userId,
-        orgId: { in: orgIds },
-      },
+      where: { userId, orgId: { in: orgIds } },
     });
 
     if (!hasAccess) {
@@ -599,25 +547,22 @@ export class ChatService {
     }
   }
 
-  // ✅ WhatsApp-like Feature: Read Receipts
+  // ============================================
+  // ✅ Read Receipts
+  // ============================================
   async markMessagesAsRead(threadId: string, userId: string) {
-    const thread = await this.getThreadById(threadId, userId);
+    await this.getThreadById(threadId, userId);
 
     const result = await prisma.$transaction(async (tx) => {
-      // Mark all unread messages as read
       const updated = await tx.chatMessage.updateMany({
         where: {
           threadId,
-          senderUserId: { not: userId }, // Don't mark own messages
+          senderUserId: { not: userId },
           isRead: false,
         },
-        data: {
-          isRead: true,
-          readAt: new Date(),
-        },
+        data: { isRead: true, readAt: new Date() },
       });
 
-      // Reset unread count for this thread
       await tx.chatThread.update({
         where: { id: threadId },
         data: { unreadCount: 0 },
@@ -626,22 +571,16 @@ export class ChatService {
       return { count: updated.count };
     });
 
-    // Broadcast read receipt via WebSocket
+    // Broadcast read receipt
     try {
       if ((global as any).socketGateway) {
         (global as any).socketGateway.broadcastToChat(threadId, 'chat:read', {
-          userId,
-          readAt: new Date(),
-          count: result.count,
+          userId, readAt: new Date(), count: result.count,
         });
       } else {
         await redisPublisher.publish(
           `thread:${threadId}:read`,
-          JSON.stringify({
-            userId,
-            readAt: new Date(),
-            count: result.count,
-          })
+          JSON.stringify({ userId, readAt: new Date(), count: result.count })
         );
       }
     } catch (error) {
@@ -651,39 +590,28 @@ export class ChatService {
     return result;
   }
 
-  // ✅ WhatsApp-like Feature: Delivery Acknowledgment (Single Tick)
+  // ✅ Delivery Acknowledgment
   async markMessagesAsDelivered(threadId: string, userId: string) {
-    const thread = await this.getThreadById(threadId, userId);
+    await this.getThreadById(threadId, userId);
 
-    // Mark all messages from OTHER senders as delivered
     const result = await prisma.chatMessage.updateMany({
       where: {
         threadId,
         senderUserId: { not: userId },
         isDelivered: false,
       },
-      data: {
-        isDelivered: true,
-        deliveredAt: new Date(),
-      },
+      data: { isDelivered: true, deliveredAt: new Date() },
     });
 
-    // Broadcast delivery receipt via Redis for WebSocket
     try {
       if ((global as any).socketGateway) {
         (global as any).socketGateway.broadcastToChat(threadId, 'chat:delivered', {
-          userId,
-          deliveredAt: new Date(),
-          count: result.count,
+          userId, deliveredAt: new Date(), count: result.count,
         });
       } else {
         await redisPublisher.publish(
           `thread:${threadId}:delivered`,
-          JSON.stringify({
-            userId,
-            deliveredAt: new Date(),
-            count: result.count,
-          })
+          JSON.stringify({ userId, deliveredAt: new Date(), count: result.count })
         );
       }
     } catch (error) {
@@ -693,104 +621,59 @@ export class ChatService {
     return { count: result.count };
   }
 
-  // ✅ WhatsApp-like Feature: Pin/Unpin Thread
+  // ✅ Pin/Unpin Thread
   async togglePinThread(threadId: string, userId: string, isPinned: boolean) {
-    const thread = await this.getThreadById(threadId, userId);
-
-    const updated = await prisma.chatThread.update({
+    await this.getThreadById(threadId, userId);
+    return prisma.chatThread.update({
       where: { id: threadId },
-      data: {
-        isPinned,
-        pinnedAt: isPinned ? new Date() : null,
-      },
+      data: { isPinned, pinnedAt: isPinned ? new Date() : null },
     });
-
-    return updated;
   }
 
-  // ✅ WhatsApp-like Feature: Archive/Unarchive Thread
+  // ✅ Archive/Unarchive Thread
   async toggleArchiveThread(threadId: string, userId: string, isArchived: boolean) {
-    const thread = await this.getThreadById(threadId, userId);
-
-    const updated = await prisma.chatThread.update({
+    await this.getThreadById(threadId, userId);
+    return prisma.chatThread.update({
       where: { id: threadId },
       data: { isArchived },
     });
-
-    return updated;
   }
 
-  // ✅ Enhanced: Get Unread Count per Thread
+  // ✅ Get Unread Counts
   async getUnreadCounts(userId: string) {
-    // Get all orgs user is member of
     const memberships = await prisma.orgMember.findMany({
       where: { userId },
       select: { orgId: true },
     });
+    const orgIds = memberships.map(m => m.orgId);
 
-    const orgIds = memberships.map((m) => m.orgId);
+    if (orgIds.length === 0) return [];
 
-    if (orgIds.length === 0) {
-      return [];
-    }
-
-    // Get unread counts for all threads user has access to
-    const threads = await prisma.chatThread.findMany({
+    return prisma.chatThread.findMany({
       where: {
         OR: [
-          {
-            account: {
-              OR: [
-                { ownerOrgId: { in: orgIds } },
-                { counterpartyOrgId: { in: orgIds } },
-              ],
-            },
-          },
-          {
-            trip: {
-              OR: [
-                { sourceOrgId: { in: orgIds } },
-                { destinationOrgId: { in: orgIds } },
-              ],
-            },
-          },
+          { orgId: { in: orgIds } },
+          { counterpartyOrgId: { in: orgIds } },
         ],
         unreadCount: { gt: 0 },
       },
-      select: {
-        id: true,
-        unreadCount: true,
-      },
+      select: { id: true, unreadCount: true },
     });
-
-    return threads;
   }
 
-  // ✅ Enhanced: Message Search
+  // ✅ Message Search
   async searchMessages(orgId: string, userId: string, query: string) {
-    // Verify user is member of org
     const membership = await prisma.orgMember.findFirst({
       where: { userId, orgId },
     });
+    if (!membership) throw new ForbiddenError('Not a member of this organization');
 
-    if (!membership) {
-      throw new ForbiddenError('Not a member of this organization');
-    }
-
-    const messages = await prisma.chatMessage.findMany({
+    return prisma.chatMessage.findMany({
       where: {
         thread: {
           OR: [
-            {
-              account: {
-                OR: [{ ownerOrgId: orgId }, { counterpartyOrgId: orgId }],
-              },
-            },
-            {
-              trip: {
-                OR: [{ sourceOrgId: orgId }, { destinationOrgId: orgId }],
-              },
-            },
+            { orgId },
+            { counterpartyOrgId: orgId },
           ],
         },
         OR: [
@@ -801,48 +684,27 @@ export class ChatService {
       },
       include: {
         thread: {
-          select: {
-            id: true,
-            title: true,
-            accountId: true,
-            tripId: true,
-          },
+          select: { id: true, title: true, orgId: true, counterpartyOrgId: true },
         },
-        senderUser: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        payment: {
-          select: {
-            id: true,
-            amount: true,
-            tag: true,
-          },
-        },
-        invoice: {
-          select: {
-            id: true,
-            invoiceNumber: true,
-            total: true,
-          },
-        },
+        senderUser: { select: { id: true, name: true } },
+        payment: { select: { id: true, amount: true, tag: true } },
+        invoice: { select: { id: true, invoiceNumber: true, total: true } },
+        trip: { select: { id: true, status: true, notes: true } },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
       take: 50,
     });
-
-    return messages;
   }
 
-  // ✅ New Action: Send Trip Card (Interactive Widget)
+  // ============================================
+  // ✅ TRIP CARD: Send trip as a contextual message card
+  // Like Google Pay UPI bubbles inside a conversation
+  // ============================================
   async sendTripCard(threadId: string, trip: any, userId: string) {
     return this.sendMessage(threadId, {
-      content: `Trip created: ${trip.sourceOrg.name} → ${trip.destinationOrg.name}`,
+      content: `🚚 Trip: ${trip.sourceOrg.name} → ${trip.destinationOrg.name}`,
       messageType: 'TRIP_CARD',
+      tripId: trip.id, // ✅ First-class trip reference on the message
       metadata: {
         tripId: trip.id,
         status: trip.status,
@@ -850,38 +712,36 @@ export class ChatService {
         driverMethod: trip.driver ? 'REGISTERED' : 'PENDING',
         driverName: trip.driver?.user?.name || 'Assigning...',
         driverPhone: trip.driver?.user?.phone || trip.pendingDriverPhone,
-        items: [], // Will be populated when load card is created
+        startPoint: trip.startPoint,
+        endPoint: trip.endPoint,
+        notes: trip.notes,
       },
     }, userId);
   }
 
-  // ✅ New Action: Send Payment Request (GPay Style)
+  // ✅ Payment Request (GPay Style)
   async sendPaymentRequest(threadId: string, amount: number, note: string, userId: string) {
     return this.sendMessage(threadId, {
       content: `Requested ₹${amount}`,
       messageType: 'PAYMENT_REQUEST',
-      metadata: {
-        amount,
-        note,
-        status: 'PENDING',
-      },
+      metadata: { amount, note, status: 'PENDING' },
     }, userId);
   }
 
-  // ✅ New Action: Send Excel-like Data Grid
+  // ✅ Data Grid (Excel-like)
   async sendDataGrid(threadId: string, title: string, rows: any[], userId: string) {
     return this.sendMessage(threadId, {
       content: `SHARED DATA: ${title}`,
       messageType: 'DATA_GRID',
-      metadata: {
-        title,
-        rows, // Array of objects
-        columns: Object.keys(rows[0] || {}),
-      },
+      metadata: { title, rows, columns: Object.keys(rows[0] || {}) },
     }, userId);
   }
 
-  // ✅ System-generated messages (for notifications, shortage alerts, payment requests, etc.)
+  // ============================================
+  // ✅ SYSTEM MESSAGE: Send to org-pair chat from a trip context
+  // Used by trip.service.ts when trips are updated/loaded/etc.
+  // Finds the org-pair chat between trip's source and dest orgs
+  // ============================================
   async sendSystemMessage(
     tripId: string,
     content: string,
@@ -890,81 +750,53 @@ export class ChatService {
       [key: string]: any
     }
   ) {
-    // Get or create thread for this trip
-    let thread = await prisma.chatThread.findUnique({
-      where: { tripId },
-      include: {
-        trip: {
-          include: {
-            sourceOrg: {
-              select: { id: true, name: true },
-            },
-            destinationOrg: {
-              select: { id: true, name: true },
-            },
-          },
-        },
+    // Look up the trip to get the org pair
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: {
+        id: true,
+        sourceOrgId: true,
+        destinationOrgId: true,
+        sourceOrg: { select: { id: true, name: true } },
+        destinationOrg: { select: { id: true, name: true } },
       },
     });
 
-    // Create thread if it doesn't exist
-    if (!thread) {
-      const trip = await prisma.trip.findUnique({
-        where: { id: tripId },
-        include: {
-          sourceOrg: {
-            select: { id: true, name: true },
-          },
-          destinationOrg: {
-            select: { id: true, name: true },
-          },
-        },
-      });
+    if (!trip) {
+      throw new NotFoundError('Trip not found');
+    }
 
-      if (!trip) {
-        throw new NotFoundError('Trip not found');
-      }
+    // Find or create the org-pair thread
+    const { thread } = await this.findOrCreateOrgPairThread(
+      trip.sourceOrgId,
+      trip.destinationOrgId
+    );
 
-      thread = await prisma.chatThread.create({
+    // Create system message WITH trip context
+    const message = await prisma.$transaction(async (tx) => {
+      const newMessage = await tx.chatMessage.create({
         data: {
-          orgId: trip.sourceOrgId,
-          tripId,
+          threadId: thread.id,
+          content,
+          senderUserId: null, // System message
+          messageType: 'SYSTEM_MESSAGE',
+          metadata: metadata || Prisma.JsonNull,
+          tripId, // ✅ Link message to trip
         },
         include: {
+          senderUser: { select: { id: true, name: true, phone: true } },
           trip: {
-            include: {
-              sourceOrg: {
-                select: { id: true, name: true },
-              },
-              destinationOrg: {
-                select: { id: true, name: true },
-              },
+            select: {
+              id: true, status: true, startPoint: true, endPoint: true, notes: true,
+              sourceOrg: { select: { id: true, name: true } },
+              destinationOrg: { select: { id: true, name: true } },
             },
           },
         },
       });
-    }
 
-    // Create system message (no sender)
-    const message = await prisma.$transaction(async (tx) => {
-      const newMessage = await tx.chatMessage.create({
-        data: {
-          threadId: thread!.id,
-          content,
-          senderUserId: null, // System message has no sender
-          messageType: 'SYSTEM_MESSAGE',
-          metadata: metadata || Prisma.JsonNull,
-        },
-        include: {
-          senderUser: {
-            select: { id: true, name: true, phone: true },
-          },
-        },
-      });
-
-      // Update thread
       await tx.chatThread.update({
-        where: { id: thread!.id },
+        where: { id: thread.id },
         data: {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
@@ -978,10 +810,14 @@ export class ChatService {
 
     // Broadcast
     try {
-      await redisPublisher.publish(
-        `thread:${thread!.id}:message`,
-        JSON.stringify(message)
-      );
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(thread.id, 'chat:message', message);
+      } else {
+        await redisPublisher.publish(
+          `thread:${thread.id}:message`,
+          JSON.stringify(message)
+        );
+      }
     } catch (error) {
       console.error('Failed to broadcast system message:', error);
     }
@@ -989,7 +825,10 @@ export class ChatService {
     return message;
   }
 
-  // ✅ System message for ACCOUNT-based threads (Ledger, Payments, Invoices)
+  // ============================================
+  // ✅ ACCOUNT SYSTEM MESSAGE: Send to org-pair chat from an account context
+  // Used by ledger.service.ts for payments, invoices, etc.
+  // ============================================
   async sendAccountSystemMessage(
     accountId: string,
     content: string,
@@ -999,33 +838,27 @@ export class ChatService {
     paymentId?: string,
     invoiceId?: string
   ) {
-    // Find or create thread for this account
-    let thread = await prisma.chatThread.findUnique({
-      where: { accountId },
+    // Look up the account to get the org pair
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
     });
 
-    if (!thread) {
-      const account = await prisma.account.findUnique({
-        where: { id: accountId },
-      });
-
-      if (!account) {
-        throw new NotFoundError('Account not found');
-      }
-
-      thread = await prisma.chatThread.create({
-        data: {
-          orgId: account.ownerOrgId,
-          accountId,
-        },
-      });
+    if (!account) {
+      throw new NotFoundError('Account not found');
     }
+
+    // Find or create the org-pair thread, linking the account
+    const { thread } = await this.findOrCreateOrgPairThread(
+      account.ownerOrgId,
+      account.counterpartyOrgId,
+      { accountId }
+    );
 
     // Create the message
     const message = await prisma.$transaction(async (tx) => {
       const newMessage = await tx.chatMessage.create({
         data: {
-          threadId: thread!.id,
+          threadId: thread.id,
           senderUserId: senderUserId || null,
           content,
           messageType: messageType as any,
@@ -1034,15 +867,12 @@ export class ChatService {
           invoiceId: invoiceId || null,
         },
         include: {
-          senderUser: {
-            select: { id: true, name: true, phone: true },
-          },
+          senderUser: { select: { id: true, name: true, phone: true } },
         },
       });
 
-      // Update thread
       await tx.chatThread.update({
-        where: { id: thread!.id },
+        where: { id: thread.id },
         data: {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
@@ -1054,12 +884,16 @@ export class ChatService {
       return newMessage;
     });
 
-    // Broadcast via Redis
+    // Broadcast
     try {
-      await redisPublisher.publish(
-        `thread:${thread!.id}:message`,
-        JSON.stringify(message)
-      );
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(thread.id, 'chat:message', message);
+      } else {
+        await redisPublisher.publish(
+          `thread:${thread.id}:message`,
+          JSON.stringify(message)
+        );
+      }
     } catch (error) {
       console.error('Failed to broadcast account system message:', error);
     }
@@ -1067,7 +901,7 @@ export class ChatService {
     return message;
   }
 
-  // ✅ GPay-style: Send Payment Update Card to account chat
+  // ✅ GPay-style: Payment Update Card
   async sendPaymentUpdateCard(
     accountId: string,
     payment: {
@@ -1120,7 +954,7 @@ export class ChatService {
     );
   }
 
-  // ✅ Invoice Card: post invoice to account chat
+  // ✅ Invoice Card
   async sendInvoiceCard(
     accountId: string,
     invoice: {

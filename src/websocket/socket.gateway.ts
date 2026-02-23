@@ -376,38 +376,19 @@ export class SocketGateway {
   private async verifyChatAccess(threadId: string, userId: string): Promise<boolean> {
     const thread = await prisma.chatThread.findUnique({
       where: { id: threadId },
-      include: {
-        trip: {
-          select: {
-            sourceOrgId: true,
-            destinationOrgId: true,
-          },
-        },
-        account: {
-          select: {
-            ownerOrgId: true,
-            counterpartyOrgId: true,
-          },
-        },
+      select: {
+        orgId: true,
+        counterpartyOrgId: true,
       },
     });
 
     if (!thread) return false;
 
-    let orgIds: string[] = [];
-
-    if (thread.trip) {
-      orgIds = [thread.trip.sourceOrgId, thread.trip.destinationOrgId];
-    } else if (thread.account) {
-      orgIds = [thread.account.ownerOrgId, thread.account.counterpartyOrgId];
-    }
-
-    if (orgIds.length === 0) return false;
-
+    // ✅ Simple: check if user belongs to either org in the pair
     const membership = await prisma.orgMember.findFirst({
       where: {
         userId,
-        orgId: { in: orgIds },
+        orgId: { in: [thread.orgId, thread.counterpartyOrgId] },
       },
     });
 

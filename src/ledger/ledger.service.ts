@@ -502,33 +502,34 @@ export class LedgerService {
         },
       });
 
-      // Get or create chat thread
-      let thread = await tx.chatThread.findFirst({
-        where: { accountId: data.accountId },
-      });
+      // ✅ Post payment update to org-pair chat via chatService (handles thread creation)
+      // The actual chat message is sent outside the transaction as non-blocking
 
-      if (!thread) {
-        thread = await tx.chatThread.create({
-          data: {
-            orgId: account.ownerOrgId,
-            accountId: data.accountId,
-          },
-        });
-      }
-
-      // Create auto chat message
-      const chatMessage = await tx.chatMessage.create({
-        data: {
-          threadId: thread.id,
-          senderUserId: createdBy,
-          content: `Payment of ₹${(Number(data.amount) / 100).toFixed(2)} received via ${data.paymentMethod} (${data.tag})`,
-          messageType: 'PAYMENT_UPDATE',
-          paymentId: payment.id,
-        },
-      });
-
-      return { payment, chatMessage, threadId: thread.id, newBalance };
+      return { payment, newBalance };
     });
+
+    // ✅ Post payment card to chat (non-blocking, outside transaction)
+    try {
+      await chatService.sendAccountSystemMessage(
+        data.accountId,
+        `Payment of ₹${(Number(data.amount) / 100).toFixed(2)} received via ${data.paymentMethod} (${data.tag})`,
+        'PAYMENT_UPDATE',
+        {
+          paymentId: result.payment.id,
+          amount: Number(data.amount),
+          mode: data.paymentMethod,
+          tag: data.tag,
+        },
+        createdBy,
+        result.payment.id
+      );
+    } catch (error) {
+      logger.error('Failed to post payment to chat', {
+        accountId: data.accountId,
+        paymentId: result.payment.id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     return result;
   }

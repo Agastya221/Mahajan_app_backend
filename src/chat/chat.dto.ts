@@ -1,13 +1,16 @@
 import { z } from 'zod';
 import { ChatMessageType } from '@prisma/client';
 
+// ✅ NEW: Thread creation is now by org pair, not by trip
+// Accepts counterpartyOrgId directly, or resolves org pair from accountId/tripId
 export const createThreadSchema = z.object({
+  counterpartyOrgId: z.string().cuid('Invalid org ID').optional(),
   accountId: z.string().cuid('Invalid account ID').optional(),
-  tripId: z.string().cuid('Invalid trip ID').optional(),
+  tripId: z.string().cuid('Invalid trip ID').optional(), // Resolves org pair from trip
 }).refine(
-  (data) => (data.accountId && !data.tripId) || (!data.accountId && data.tripId),
+  (data) => data.counterpartyOrgId || data.accountId || data.tripId,
   {
-    message: 'Either accountId or tripId must be provided, but not both',
+    message: 'At least one of counterpartyOrgId, accountId, or tripId must be provided',
   }
 );
 
@@ -17,6 +20,7 @@ export const sendMessageSchema = z.object({
   attachmentIds: z.array(z.string().cuid()).max(10).optional(),
   replyToId: z.string().cuid().optional(),
   clientMessageId: z.string().optional(),
+  tripId: z.string().cuid().optional(), // ✅ NEW: Optional trip context for this message
 }).refine(
   (data) => {
     // TEXT messages need content
