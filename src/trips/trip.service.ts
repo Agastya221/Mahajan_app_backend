@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../utils/errors';
-import { CreateTripDto, UpdateTripStatusDto, EditTripDto, CancelTripDto, ChangeTripDriverDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
+import { CreateTripDto, UpdateTripDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
 import { TripStatus, TripEventType, UserRole, Prisma } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
@@ -350,7 +350,19 @@ export class TripService {
     return trip;
   }
 
-  async updateTripStatus(tripId: string, data: UpdateTripStatusDto, userId: string) {
+  async updateTrip(tripId: string, data: UpdateTripDto, userId: string) {
+    if (data.status === 'CANCELLED') {
+      return this.cancelTrip(tripId, { reason: data.cancelReason! }, userId);
+    } else if (data.status) {
+      return this.updateTripStatus(tripId, { status: data.status, remarks: data.remarks }, userId);
+    } else if (data.driverPhone || data.truckNumber) {
+      return this.changeTripDriver(tripId, { driverPhone: data.driverPhone, truckNumber: data.truckNumber, reason: data.changeReason! }, userId);
+    } else {
+      return this.editTrip(tripId, data, userId);
+    }
+  }
+
+  private async updateTripStatus(tripId: string, data: { status: TripStatus; remarks?: string }, userId: string) {
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
     });
@@ -853,7 +865,7 @@ export class TripService {
   // ============================================
   // ✅ EDIT TRIP
   // ============================================
-  async editTrip(tripId: string, data: EditTripDto, userId: string) {
+  private async editTrip(tripId: string, data: UpdateTripDto, userId: string) {
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
       include: {
@@ -896,7 +908,9 @@ export class TripService {
     if (data.destinationAddress !== undefined) updateData.destinationAddress = data.destinationAddress;
     if (data.notes !== undefined) updateData.notes = data.notes;
     if (data.estimatedDistance !== undefined) updateData.estimatedDistance = data.estimatedDistance;
-    if (data.estimatedArrival !== undefined) updateData.estimatedArrival = new Date(data.estimatedArrival);
+    if (data.estimatedArrival !== undefined) {
+      updateData.estimatedArrival = data.estimatedArrival ? new Date(data.estimatedArrival) : null;
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       const updatedTrip = await tx.trip.update({
@@ -948,7 +962,7 @@ export class TripService {
   // ============================================
   // ✅ CANCEL TRIP (Soft Cancel)
   // ============================================
-  async cancelTrip(tripId: string, data: CancelTripDto, userId: string) {
+  private async cancelTrip(tripId: string, data: { reason: string }, userId: string) {
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
     });
@@ -1023,7 +1037,7 @@ export class TripService {
   // ============================================
   // ✅ CHANGE DRIVER/TRUCK MID-TRIP
   // ============================================
-  async changeTripDriver(tripId: string, data: ChangeTripDriverDto, userId: string) {
+  private async changeTripDriver(tripId: string, data: { driverPhone?: string; truckNumber?: string; reason: string }, userId: string) {
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
       include: {
