@@ -447,6 +447,214 @@ async function main() {
   }
 
   // ════════════════════════════════════════════
+  // 9. BULK GENERATION (20+ Users, Orgs, Drivers, Trips for all statuses)
+  // ════════════════════════════════════════════
+  const fakeNames = ['Amit', 'Rohit', 'Vikram', 'Sanjay', 'Rajesh', 'Karan', 'Vijay', 'Anil', 'Sunil', 'Prakash', 'Manish', 'Rahul', 'Nitin', 'Deepak', 'Rakesh'];
+  const mahajans = [];
+  const driverProfs = [];
+  const bulkOrgs = [];
+  const bulkTrucks = [];
+
+  for (let i = 0; i < 15; i++) {
+    const p = i.toString().padStart(2, '0');
+    // Mahajan User
+    const mUser = await prisma.user.upsert({
+      where: { phone: `+9198000000${p}` },
+      update: {},
+      create: { phone: `+9198000000${p}`, name: `${fakeNames[i]} Trader`, role: UserRole.MAHAJAN, status: 'ACTIVE' },
+    });
+    mahajans.push(mUser);
+
+    // Driver User
+    const dUser = await prisma.user.upsert({
+      where: { phone: `+9188000000${p}` },
+      update: {},
+      create: { phone: `+9188000000${p}`, name: `${fakeNames[i]} Driver`, role: UserRole.DRIVER, status: 'ACTIVE' },
+    });
+
+    // Driver Profile
+    let dProf = await prisma.driverProfile.findUnique({ where: { userId: dUser.id } });
+    if (!dProf) {
+      dProf = await prisma.driverProfile.create({ data: { userId: dUser.id, licenseNo: `MH${10 + i}/2023/${1000 + i}` } });
+    }
+    driverProfs.push(dProf);
+
+    // Create Org
+    const city = ['Pune', 'Mumbai', 'Nashik', 'Nagpur', 'Surat'][i % 5];
+    const cityGstin = `27BB${city.substring(0, 2).toUpperCase()}${1000 + i}R1Z${p}`;
+    let org = await prisma.org.findUnique({ where: { gstin: cityGstin } });
+    if (!org) {
+      org = await prisma.org.create({
+        data: {
+          name: `${fakeNames[i]} Agro Traders`,
+          city: city,
+          phone: `+9177000000${p}`,
+          roleType: MahajanRoleType.BOTH,
+          gstin: cityGstin,
+          address: { label: 'Main Market', city, state: 'Maharashtra', pincode: '400000' }
+        }
+      });
+    }
+    bulkOrgs.push(org);
+
+    // Org Member
+    await prisma.orgMember.upsert({
+      where: { orgId_userId: { orgId: org.id, userId: mUser.id } },
+      update: {}, create: { orgId: org.id, userId: mUser.id }
+    });
+
+    // Truck
+    const tNum = `MH${10 + i} AB ${1000 + i}`;
+    let truck = await prisma.truck.findUnique({ where: { number: tNum } });
+    if (!truck) {
+      truck = await prisma.truck.create({
+        data: { orgId: org.id, number: tNum, type: 'TATA_407', capacity: 3000 }
+      });
+    }
+    bulkTrucks.push(truck);
+  }
+
+  console.log('✅ Bulk Users, Orgs, Drivers, Trucks created');
+
+  // Generate Trips for ALL STATUSES
+  const allStatuses = Object.values(TripStatus);
+  let bulkTripCount = 0;
+
+  for (const status of allStatuses) {
+    // 3 trips per status
+    for (let j = 0; j < 3; j++) {
+      const srcIdx = bulkTripCount % bulkOrgs.length;
+      let destIdx = (bulkTripCount + 1) % bulkOrgs.length;
+      if (srcIdx === destIdx) destIdx = (destIdx + 1) % bulkOrgs.length;
+      const driverIdx = bulkTripCount % driverProfs.length;
+
+      const srcOrg = bulkOrgs[srcIdx];
+      const destOrg = bulkOrgs[destIdx];
+      const tDriverProf = driverProfs[driverIdx];
+      const tTruck = bulkTrucks[srcIdx];
+      const creator = mahajans[srcIdx];
+
+      const trip = await prisma.trip.create({
+        data: {
+          sourceOrgId: srcOrg.id,
+          destinationOrgId: destOrg.id,
+          truckId: tTruck.id,
+          driverId: tDriverProf.id,
+          createdByUserId: creator.id,
+          startPoint: `Market in ${srcOrg.city}`,
+          endPoint: `Market in ${destOrg.city}`,
+          status: status,
+          notes: `Bulk generated trip with status ${status}`,
+          sourceAddress: srcOrg.address ? (srcOrg.address as any) : undefined,
+          destinationAddress: destOrg.address ? (destOrg.address as any) : undefined,
+          ...(status === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: 'Vehicle Breakdown' } : {}),
+        }
+      });
+
+      // Insert minimal event
+      await prisma.tripEvent.create({
+        data: {
+          tripId: trip.id,
+          eventType: TripEventType.TRIP_CREATED,
+          description: `Bulk Trip created with initial status ${status}`,
+          createdByUserId: creator.id,
+        }
+      });
+
+      // Special handling based on status for realism
+      if (['LOADED', 'IN_TRANSIT', 'ARRIVED', 'REACHED', 'DELIVERED', 'COMPLETED', 'CLOSED'].includes(status)) {
+        await prisma.tripEvent.create({
+          data: { tripId: trip.id, eventType: TripEventType.LOAD_COMPLETED, description: 'Loading done', createdByUserId: creator.id }
+        });
+      }
+      if (['IN_TRANSIT', 'ARRIVED', 'REACHED', 'DELIVERED', 'COMPLETED', 'CLOSED'].includes(status)) {
+        await prisma.tripEvent.create({
+          data: { tripId: trip.id, eventType: TripEventType.IN_TRANSIT, description: 'Started', createdByUserId: tDriverProf.userId }
+        });
+      }
+      if (['ARRIVED', 'REACHED', 'DELIVERED', 'COMPLETED', 'CLOSED'].includes(status)) {
+        await prisma.tripEvent.create({
+          data: { tripId: trip.id, eventType: TripEventType.ARRIVED, description: 'Arrived at destination', createdByUserId: tDriverProf.userId }
+        });
+      }
+      if (['DELIVERED', 'COMPLETED', 'CLOSED'].includes(status)) {
+        await prisma.tripEvent.create({
+          data: { tripId: trip.id, eventType: TripEventType.DELIVERED, description: 'Delivered', createdByUserId: tDriverProf.userId }
+        });
+      }
+      if (status === 'DISPUTED') {
+        await prisma.tripEvent.create({
+          data: { tripId: trip.id, eventType: TripEventType.DISPUTE_RAISED, description: 'Dispute raised due to shortage', createdByUserId: creator.id }
+        });
+      }
+
+      // Create LoadCards dynamically
+      const lc = await prisma.tripLoadCard.create({
+        data: {
+          tripId: trip.id,
+          loadedAt: new Date(),
+          remarks: 'Auto-generated load card',
+          totalItems: 1,
+          totalQuantity: 100,
+          totalAmount: 50000,
+          createdByUserId: creator.id
+        }
+      });
+
+      await prisma.loadItem.create({
+        data: {
+          loadCardId: lc.id,
+          itemName: 'Mixed Vegetables',
+          quantity: 100,
+          unit: QuantityUnit.KG,
+          rate: 500,
+          amount: 50000,
+          sortOrder: 1
+        }
+      });
+
+      if (['DELIVERED', 'COMPLETED', 'CLOSED', 'DISPUTED'].includes(status)) {
+        const rc = await prisma.tripReceiveCard.create({
+          data: {
+            tripId: trip.id,
+            receivedAt: new Date(),
+            remarks: 'Auto-generated receive card',
+            totalItems: 1,
+            totalQuantity: 95,
+            totalAmount: 47500,
+            totalShortage: 5,
+            shortagePercent: 5,
+            status: status === 'DISPUTED' ? 'DISPUTED' : 'APPROVED',
+            createdByUserId: tDriverProf.userId
+          }
+        });
+
+        const loadIt = await prisma.loadItem.findFirst({ where: { loadCardId: lc.id } });
+        if (loadIt) {
+          await prisma.receiveItem.create({
+            data: {
+              receiveCardId: rc.id,
+              loadItemId: loadIt.id,
+              itemName: 'Mixed Vegetables',
+              quantity: 95,
+              unit: QuantityUnit.KG,
+              rate: 500,
+              amount: 47500,
+              shortage: 5,
+              shortagePercent: 5,
+              sortOrder: 1
+            }
+          });
+        }
+      }
+
+      bulkTripCount++;
+    }
+  }
+
+  console.log(`✅ Bulk Trips created (${bulkTripCount} trips for all statuses)`);
+
+  // ════════════════════════════════════════════
   // SUMMARY
   // ════════════════════════════════════════════
   console.log('\n══════════════════════════════════════════════════════');

@@ -208,13 +208,25 @@ POST /orgs
 
 **Auth:** Private
 
+**Note:** `address` must be a structured JSON object. It follows the **Address Object Schema** detailed in the Trips section (contains fields like `label`, `line1`, `city`, `state`, `pincode`, etc).
+
 **Request Body:**
 ```json
 {
   "name": "Kumar Traders",
   "city": "Delhi",
   "phone": "+919876543210",
-  "address": "Azadpur Mandi, Delhi",
+  "address": {
+    "label": "Nashik Mandi",
+    "line1": "Shop No. 45, Pimpalgaon Baswant APMC",
+    "line2": "Fruit Market Yard",
+    "city": "Nashik",
+    "state": "Maharashtra",
+    "pincode": "422209",
+    "landmark": "Near Main Gate",
+    "contactName": "Agastya Mahajan",
+    "contactPhone": "+916202923165"
+  },
   "gstin": "07AABCU9603R1ZV",
   "roleType": "SOURCE_COLLECTOR"
 }
@@ -257,7 +269,17 @@ GET /orgs?phone=+919000000000
       "id": "...",
       "name": "Kumar Traders",
       "city": "Delhi",
-      "address": "Shop No. 45, Pimpalgaon Baswant APMC",
+      "address": {
+        "city": "Nashik",
+        "label": "Nashik Mandi",
+        "line1": "Shop No. 45, Pimpalgaon Baswant APMC",
+        "line2": "Fruit Market Yard",
+        "state": "Maharashtra",
+        "pincode": "422209",
+        "landmark": "Near Main Gate",
+        "contactName": "Agastya Mahajan",
+        "contactPhone": "+916202923165"
+      },
       "phone": "+919000000000",
       "memberCount": 1,
       "ownerName": "Kumar",
@@ -303,7 +325,14 @@ PATCH /orgs/:orgId
 ```json
 {
   "name": "Kumar Traders Pvt Ltd",
-  "city": "New Delhi"
+  "city": "New Delhi",
+  "address": {
+    "label": "Okhla Mandi",
+    "line1": "Godown #12",
+    "city": "New Delhi",
+    "state": "Delhi",
+    "pincode": "110020"
+  }
 }
 ```
 
