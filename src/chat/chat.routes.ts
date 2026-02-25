@@ -17,6 +17,13 @@ const chatController = new ChatController();
 router.post('/threads', authenticate, chatController.createThread);
 
 /**
+ * @route   POST /api/v1/chat/start-by-phone
+ * @desc    Start a chat with a Mahajan by phone number (Add Mahajan feature)
+ * @access  Private
+ */
+router.post('/start-by-phone', authenticate, chatController.startChatByPhone);
+
+/**
  * @route   GET /api/v1/chat/threads
  * @desc    List all chat threads for the current user
  * @access  Private

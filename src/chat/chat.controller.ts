@@ -6,6 +6,7 @@ import {
   sendMessageSchema,
   searchMessagesSchema,
   chatActionSchema,
+  startChatByPhoneSchema,
 } from './chat.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -30,6 +31,30 @@ export class ChatController {
   createThread = asyncHandler(async (req: AuthRequest, res: Response) => {
     const data = createThreadSchema.parse(req.body);
     const result = await chatService.createOrGetThread(data, req.user!.id);
+
+    res.status(result.isNew ? 201 : 200).json({
+      success: true,
+      data: result.thread,
+      message: result.isNew ? 'Thread created' : 'Thread already exists',
+    });
+  });
+
+  /**
+   * POST /chat/start-by-phone
+   * Start a chat with a Mahajan by phone number (Add Mahajan feature).
+   * Body: { phone }
+   */
+  startChatByPhone = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const data = startChatByPhoneSchema.parse(req.body);
+    const result = await chatService.startChatByPhone(data.phone, req.user!.id);
+
+    if (result.inviteRequired) {
+      return res.status(202).json({
+        success: true,
+        data: result,
+        message: 'Mahajan not found. Invite generated.',
+      });
+    }
 
     res.status(result.isNew ? 201 : 200).json({
       success: true,

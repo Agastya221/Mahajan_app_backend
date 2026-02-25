@@ -202,6 +202,84 @@ export class ChatService {
   }
 
   // ============================================
+  // ✅ Start Chat by Phone (Add Mahajan Flow)
+  // ============================================
+  async startChatByPhone(phone: string, userId: string) {
+    // 1. Get user's org
+    const memberships = await prisma.orgMember.findMany({
+      where: { userId },
+      select: { orgId: true },
+    });
+    const userOrgIds = memberships.map((m) => m.orgId);
+    if (userOrgIds.length === 0) {
+      throw new ForbiddenError('User is not a member of any organization');
+    }
+    const myOrgId = userOrgIds[0];
+
+    // Normalize phone format if needed
+    let normalizedPhone = phone.trim();
+    if (normalizedPhone.length === 10 && !normalizedPhone.startsWith('+91')) {
+      normalizedPhone = `+91${normalizedPhone}`;
+    }
+
+    // 2. Find org by phone
+    const { OrgService } = await import('../org/org.service'); // Lazy import to avoid circular dependency
+    const orgService = new OrgService();
+    let targetOrg = await orgService.searchOrgsByPhone(normalizedPhone);
+
+    if (targetOrg) {
+      if (userOrgIds.includes(targetOrg.id)) {
+        throw new ValidationError('Cannot start a chat with your own organization');
+      }
+
+      // CASE A & B: Real Org or Placeholder Org exists 
+      // Proceed and create/get the thread
+      const result = await this.findOrCreateOrgPairThread(myOrgId, targetOrg.id);
+      return { ...result, inviteRequired: false };
+    }
+
+    // CASE C: No Org Exists -> Create Placeholder Org & Invite
+    // 1. Create Placeholder Org
+    const placeholderOrgName = `Pending (${normalizedPhone})`;
+    const placeholderOrg = await prisma.org.create({
+      data: {
+        name: placeholderOrgName,
+        phone: normalizedPhone,
+      },
+    });
+
+    // 2. Create Invite Record
+    const crypto = await import('crypto');
+    const token = crypto.randomBytes(32).toString('hex');
+    await prisma.mahajanInvite.upsert({
+      where: {
+        invitedByOrgId_invitedPhone: {
+          invitedByOrgId: myOrgId,
+          invitedPhone: normalizedPhone
+        }
+      },
+      update: {
+        inviteToken: token, // Refresh token just in case
+        status: 'PENDING'
+      },
+      create: {
+        invitedByOrgId: myOrgId,
+        invitedPhone: normalizedPhone,
+        inviteToken: token,
+        inviteeOrgId: placeholderOrg.id
+      }
+    });
+
+    // Send SMS (Mock for now)
+    logger.info(`Mock SMS Sent to ${normalizedPhone}: You have been invited by ${myOrgId}. Join using token ${token}`);
+
+    // 3. Create Chat Thread with Placeholder
+    const threadResult = await this.findOrCreateOrgPairThread(myOrgId, placeholderOrg.id);
+
+    return { ...threadResult, inviteRequired: true };
+  }
+
+  // ============================================
   // ✅ Get all threads for user
   // ============================================
   async getThreads(userId: string, filters?: { page?: number; limit?: number }) {

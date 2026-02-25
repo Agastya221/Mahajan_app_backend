@@ -26,6 +26,107 @@ export class OrgService {
         },
       });
 
+      // ============================================
+      // ✅ AUTO-CONNECT INVITES (Add Mahajan Flow)
+      // ============================================
+      if (data.phone) {
+        // Find any pending invites for this phone
+        let normalizedPhone = data.phone.trim();
+        if (normalizedPhone.length === 10 && !normalizedPhone.startsWith('+91')) {
+          normalizedPhone = `+91${normalizedPhone}`;
+        }
+
+        const pendingInvites = await tx.mahajanInvite.findMany({
+          where: {
+            invitedPhone: normalizedPhone,
+            status: 'PENDING',
+          },
+        });
+
+        for (const invite of pendingInvites) {
+          // 1. Mark invite as Accepted & link real org
+          await tx.mahajanInvite.update({
+            where: { id: invite.id },
+            data: {
+              status: 'ACCEPTED',
+              inviteeOrgId: org.id, // Replace placeholder org ID with real org ID
+            },
+          });
+
+          // 2. Transfer chat thread from placeholder org to real org
+          if (invite.inviteeOrgId) {
+            // Find the thread involving the inviter and the placeholder
+            const placeholderThread = await tx.chatThread.findFirst({
+              where: {
+                OR: [
+                  { orgId: invite.invitedByOrgId, counterpartyOrgId: invite.inviteeOrgId },
+                  { orgId: invite.inviteeOrgId, counterpartyOrgId: invite.invitedByOrgId }
+                ]
+              },
+            });
+
+            if (placeholderThread) {
+              // Ensure we order the new IDs correctly to prevent duplicates
+              const [newOrgA, newOrgB] = invite.invitedByOrgId < org.id
+                ? [invite.invitedByOrgId, org.id]
+                : [org.id, invite.invitedByOrgId];
+
+              // Check if a real thread already exists somehow (edge case)
+              const existingRealThread = await tx.chatThread.findUnique({
+                where: {
+                  orgId_counterpartyOrgId: {
+                    orgId: newOrgA,
+                    counterpartyOrgId: newOrgB,
+                  }
+                }
+              });
+
+              if (!existingRealThread) {
+                // Safe to transfer the placeholder thread to the real org
+                await tx.chatThread.update({
+                  where: { id: placeholderThread.id },
+                  data: {
+                    orgId: newOrgA,
+                    counterpartyOrgId: newOrgB
+                  }
+                });
+                // 3. Delete the placeholder org as it's no longer needed
+                await tx.org.delete({ where: { id: invite.inviteeOrgId } }).catch(() => { });
+              } else {
+                // A real thread already exists. Move messages from placeholder thread to real thread
+                await tx.chatMessage.updateMany({
+                  where: { threadId: placeholderThread.id },
+                  data: { threadId: existingRealThread.id }
+                });
+                // Delete the old placeholder thread and org
+                await tx.chatThread.delete({ where: { id: placeholderThread.id } });
+                await tx.org.delete({ where: { id: invite.inviteeOrgId } }).catch(() => { });
+              }
+            } else {
+              // Should not happen, but if no placeholder thread exists, ensure one exists for real pair
+              const [newOrgA, newOrgB] = invite.invitedByOrgId < org.id
+                ? [invite.invitedByOrgId, org.id]
+                : [org.id, invite.invitedByOrgId];
+
+              await tx.chatThread.upsert({
+                where: {
+                  orgId_counterpartyOrgId: {
+                    orgId: newOrgA,
+                    counterpartyOrgId: newOrgB,
+                  }
+                },
+                update: {},
+                create: {
+                  orgId: newOrgA,
+                  counterpartyOrgId: newOrgB,
+                  type: 'ORG_CHAT'
+                }
+              });
+            }
+          }
+        }
+      }
+
       return org;
     });
 
@@ -207,6 +308,45 @@ export class OrgService {
     await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 300);
 
     return result;
+  }
+
+  async searchOrgsByPhone(phone: string) {
+    // Normalize phone format if needed (e.g. ensure +91 prefix)
+    let normalizedPhone = phone.trim();
+    if (normalizedPhone.length === 10 && !normalizedPhone.startsWith('+91')) {
+      normalizedPhone = `+91${normalizedPhone}`;
+    }
+
+    // Try finding exact match by org.phone first
+    let org = await prisma.org.findFirst({
+      where: { phone: normalizedPhone },
+      include: { members: { select: { user: { select: { name: true, phone: true } } } } }
+    });
+
+    if (!org) {
+      // Try finding org through owner's user.phone
+      org = await prisma.org.findFirst({
+        where: {
+          members: {
+            some: {
+              user: { phone: normalizedPhone }
+            }
+          }
+        },
+        include: { members: { select: { user: { select: { name: true, phone: true } } } } }
+      });
+    }
+
+    if (!org) return null;
+
+    return {
+      id: org.id,
+      name: org.name,
+      city: org.city,
+      phone: org.phone || org.members[0]?.user?.phone || null,
+      memberCount: org.members.length, // Let the frontend deduce if it's a guest org with 0 members
+      isGuest: org.members.length === 0, // Optionally explicitly add the flag so frontend doesn't need to guess
+    };
   }
 }
 

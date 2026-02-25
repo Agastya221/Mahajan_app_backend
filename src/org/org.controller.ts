@@ -18,7 +18,15 @@ export class OrgController {
   });
 
   getUserOrgs = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { search } = req.query;
+    const { search, phone } = req.query;
+
+    if (phone) {
+      if (typeof phone !== 'string') {
+        return res.status(400).json({ success: false, message: 'Invalid phone format' });
+      }
+      const org = await orgService.searchOrgsByPhone(phone as string);
+      return res.json({ success: true, data: org ? [org] : [] });
+    }
 
     // Handle global search if ?search= is provided
     if (search) {

@@ -170,6 +170,9 @@ model Org {
   // ✅ NEW: Item Master & Export Logs
   items      Item[]
   exportLogs ExportLog[]
+  
+  // ✅ NEW: Invitations sent by this org
+  sentInvites MahajanInvite[]
 }
 
 model User {
@@ -204,6 +207,24 @@ model User {
   disputedPayments     Payment[] @relation("DisputedPayments")
 
   @@index([status])
+}
+
+// ============================================
+// ✅ NEW: MAHAJAN INVITE MODEL
+// ============================================
+model MahajanInvite {
+  id             String   @id @default(cuid())
+  invitedByOrgId String
+  invitedByOrg   Org      @relation(fields: [invitedByOrgId], references: [id], onDelete: Cascade)
+  invitedPhone   String
+  inviteToken    String   @unique
+  inviteeOrgId   String?
+  status         String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  
+  createdAt      DateTime @default(now())
+
+  @@unique([invitedByOrgId, invitedPhone])
+  @@index([invitedPhone])
 }
 
 model RefreshToken {

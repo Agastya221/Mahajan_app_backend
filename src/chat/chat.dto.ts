@@ -14,6 +14,10 @@ export const createThreadSchema = z.object({
   }
 );
 
+export const startChatByPhoneSchema = z.object({
+  phone: z.string().regex(/^\+91\d{10}$/, 'Invalid Indian phone number'),
+});
+
 // ✅ v3: Unified PATCH — pin, archive, read, delivered all in one endpoint
 export const updateThreadSchema = z.object({
   isPinned: z.boolean().optional(),
@@ -75,3 +79,4 @@ export type CreateThreadDto = z.infer<typeof createThreadSchema>;
 export type UpdateThreadDto = z.infer<typeof updateThreadSchema>;
 export type SendMessageDto = z.infer<typeof sendMessageSchema>;
 export type ChatActionDto = z.infer<typeof chatActionSchema>;
+export type StartChatByPhoneDto = z.infer<typeof startChatByPhoneSchema>;
