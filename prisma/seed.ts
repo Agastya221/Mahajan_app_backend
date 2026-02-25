@@ -53,38 +53,75 @@ async function main() {
 
   console.log('✅ Users created');
 
+  // ── Flipkart / Swiggy style structured addresses ──
+  const nashikAddress: any = {
+    label: 'Nashik Mandi',
+    line1: 'Shop No. 45, Pimpalgaon Baswant APMC',
+    line2: 'Fruit Market Yard',
+    city: 'Nashik',
+    state: 'Maharashtra',
+    pincode: '422209',
+    landmark: 'Near Main Gate',
+    contactName: 'Agastya Mahajan',
+    contactPhone: '+916202923165',
+  };
+
+  const mumbaiAddress: any = {
+    label: 'Vashi Market',
+    line1: 'Gala No. 112, Sector 19',
+    line2: 'APMC Market Phase 2',
+    city: 'Navi Mumbai',
+    state: 'Maharashtra',
+    pincode: '400703',
+    landmark: 'Opposite Onion Shed',
+    contactName: 'Javed Shaikh',
+    contactPhone: '+919006412619',
+  };
+
+  const puneAddress: any = {
+    label: 'Pune Market Yard',
+    line1: 'Market Yard, Gultekdi',
+    line2: 'Gate No. 4',
+    city: 'Pune',
+    state: 'Maharashtra',
+    pincode: '411037',
+    landmark: 'Next to Weighing Bridge',
+    contactName: 'Ramesh Patil',
+    contactPhone: '+919823456789',
+  };
+
   // ════════════════════════════════════════════
   // 2. ORGANIZATIONS (Real Indian mandi businesses)
   // ════════════════════════════════════════════
   const nashikOrg = await prisma.org.upsert({
     where: { gstin: '27AABCU9603R1ZM' },
-    update: { name: 'Mahajan Fruits & Vegetables, Nashik' },
+    update: { name: 'Mahajan Fruits & Vegetables, Nashik', address: nashikAddress },
     create: {
       name: 'Mahajan Fruits & Vegetables, Nashik',
       city: 'Nashik', phone: '+916202923165',
-      address: 'Shop No. 45, Pimpalgaon Baswant APMC, Nashik, Maharashtra 422209',
+      address: nashikAddress,
       gstin: '27AABCU9603R1ZM', roleType: MahajanRoleType.SOURCE_COLLECTOR,
     },
   });
 
   const mumbaiOrg = await prisma.org.upsert({
     where: { gstin: '27AABCU9603R2ZN' },
-    update: { name: 'Shaikh Trading Co., Vashi' },
+    update: { name: 'Shaikh Trading Co., Vashi', address: mumbaiAddress },
     create: {
       name: 'Shaikh Trading Co., Vashi',
       city: 'Navi Mumbai', phone: '+919006412619',
-      address: 'Gala No. 112, Sector 19, APMC Market, Vashi, Navi Mumbai 400703',
+      address: mumbaiAddress,
       gstin: '27AABCU9603R2ZN', roleType: MahajanRoleType.DESTINATION_DISTRIBUTOR,
     },
   });
 
   const puneOrg = await prisma.org.upsert({
     where: { gstin: '27AABCU9603R3ZO' },
-    update: { name: 'Patil Agro Traders, Pune' },
+    update: { name: 'Patil Agro Traders, Pune', address: puneAddress },
     create: {
       name: 'Patil Agro Traders, Pune',
       city: 'Pune', phone: '+919823456789',
-      address: 'Market Yard, Gultekdi, Pune, Maharashtra 411037',
+      address: puneAddress,
       gstin: '27AABCU9603R3ZO', roleType: MahajanRoleType.BOTH,
     },
   });
@@ -170,6 +207,8 @@ async function main() {
         startTime: hrs(3), estimatedDistance: 185, estimatedArrival: hrs(-1),
         status: TripStatus.IN_TRANSIT,
         notes: 'Urgent — Javed bhai needs tomatoes for Dadar market by evening',
+        sourceAddress: nashikAddress,
+        destinationAddress: mumbaiAddress,
       },
     });
     const lc = await prisma.tripLoadCard.create({ data: { tripId: tripA.id, loadedAt: hrs(3.5), remarks: 'All items checked, quality A grade', totalItems: 2, totalQuantity: 130, totalAmount: 184000, createdByUserId: agastya.id } });
@@ -201,6 +240,8 @@ async function main() {
         startTime: days(1.5), estimatedDistance: 185,
         status: TripStatus.DELIVERED,
         notes: 'Export quality Thompson grapes for Mumbai retailers',
+        sourceAddress: nashikAddress,
+        destinationAddress: mumbaiAddress,
       },
     });
     const lcB = await prisma.tripLoadCard.create({ data: { tripId: tripB.id, loadedAt: days(1.5), remarks: 'Grapes packed in cold storage boxes', totalItems: 2, totalQuantity: 95, totalAmount: 365000, createdByUserId: agastya.id } });
@@ -239,6 +280,8 @@ async function main() {
         startPoint: 'Pimpalgaon APMC', endPoint: 'APMC Vashi',
         status: TripStatus.CREATED,
         notes: 'Capsicum and cauliflower — need to assign driver',
+        sourceAddress: nashikAddress,
+        destinationAddress: mumbaiAddress,
       },
     });
     await prisma.tripEvent.create({ data: { tripId: tripC.id, eventType: TripEventType.TRIP_CREATED, description: 'Trip created, driver TBD', createdByUserId: agastya.id } });
@@ -256,6 +299,8 @@ async function main() {
         startTime: days(5), estimatedDistance: 150,
         status: TripStatus.COMPLETED,
         notes: 'Potato shipment — all settled',
+        sourceAddress: puneAddress,
+        destinationAddress: mumbaiAddress,
       },
     });
   }

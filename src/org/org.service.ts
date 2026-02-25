@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import { redisClient } from '../config/redis';
 import { NotFoundError, ForbiddenError } from '../utils/errors';
 import { CreateOrgDto, UpdateOrgDto } from './org.dto';
+import { Prisma } from '@prisma/client';
 
 export class OrgService {
   async createOrg(data: CreateOrgDto, createdBy: string) {
@@ -12,7 +13,7 @@ export class OrgService {
           name: data.name,
           city: data.city,
           phone: data.phone,
-          address: data.address,
+          address: data.address ? (data.address as any) : Prisma.JsonNull,
           gstin: data.gstin,
           roleType: data.roleType,
         },
@@ -219,7 +220,10 @@ export class OrgService {
 
     const org = await prisma.org.update({
       where: { id: orgId },
-      data,
+      data: {
+        ...data,
+        address: data.address ? (data.address as any) : undefined,
+      },
     });
 
     return org;
@@ -280,6 +284,7 @@ export class OrgService {
         id: true,
         name: true,
         city: true,
+        address: true,
         phone: true,
         members: {
           select: {
@@ -299,6 +304,7 @@ export class OrgService {
       id: org.id,
       name: org.name,
       city: org.city,
+      address: org.address,
       phone: org.phone || org.members[0]?.user.phone,
       ownerName: org.members[0]?.user.name,
       displayLabel: `${org.name} (${org.city || 'No City'}) - ${org.members[0]?.user.name}`,
@@ -343,6 +349,7 @@ export class OrgService {
       id: org.id,
       name: org.name,
       city: org.city,
+      address: org.address,
       phone: org.phone || org.members[0]?.user?.phone || null,
       memberCount: org.members.length, // Let the frontend deduce if it's a guest org with 0 members
       isGuest: org.members.length === 0, // Optionally explicitly add the flag so frontend doesn't need to guess

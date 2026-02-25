@@ -236,15 +236,17 @@ POST /orgs
 
 ---
 
-### 2.2 Get User's Organizations
+### 2.2 Get User's Organizations (or Search by Phone/Name)
 ```http
 GET /orgs?search=kumar
+GET /orgs?phone=+919000000000
 ```
 
 **Auth:** Private
 
 **Query Params:**
-- `search` (optional): Filter organizations by name, phone, or owner name. If provided, searches globally across all orgs (min 2 chars).
+- `search` (optional): Filter organizations by name, phone, or owner name. Searches globally across all orgs (min 2 chars).
+- `phone` (optional): Find an exact match by phone number. Crucial for the "Add Mahajan" flow.
 
 **Response:**
 ```json
@@ -255,8 +257,11 @@ GET /orgs?search=kumar
       "id": "...",
       "name": "Kumar Traders",
       "city": "Delhi",
+      "address": "Shop No. 45, Pimpalgaon Baswant APMC",
+      "phone": "+919000000000",
       "memberCount": 1,
-      "truckCount": 5
+      "ownerName": "Kumar",
+      "displayLabel": "Kumar Traders (Delhi) - Kumar"
     }
   ]
 }
@@ -1157,6 +1162,37 @@ POST /chat/threads
 ```
 
 **Note:** Provide at least one of `counterpartyOrgId`, `accountId`, or `tripId`. The backend will automatically resolve this to an Organization Pair (the user's org and the counterparty org) and return the single, unified chat thread for that pair. If it does not exist, a new one is created.
+
+---
+
+### 10.1.5 Start Chat by Phone (Add Mahajan Flow)
+```http
+POST /chat/start-by-phone
+```
+
+**Auth:** Private
+
+**Description:** Main entry point for the "WhatsApp style" Add Mahajan functionality. 
+- CASE A: Real Org exists → Returns Chat Thread
+- CASE B: Placeholder Org exists → Returns Chat Thread
+- CASE C: No Org exists → Generates an invite (`MahajanInvite`), creates a placeholder Org, and returns the newly connected Chat Thread.
+
+**Request Body:**
+```json
+{
+  "phone": "+919999000011"
+}
+```
+
+**Response (200 / 201 / 202 status depending on if it created an invite):**
+```json
+{
+  "success": true,
+  "data": { ...ThreadObject },
+  "message": "Thread created",
+  "inviteRequired": true|false
+}
+```
 
 ---
 

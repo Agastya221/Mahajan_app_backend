@@ -1,18 +1,6 @@
 import { z } from 'zod';
 import { TripStatus, QuantityUnit } from '@prisma/client';
-
-// ✅ Structured address
-export const addressSchema = z.object({
-  label: z.string().max(100).optional(),
-  line1: z.string().min(1).max(200),
-  line2: z.string().max(200).optional(),
-  city: z.string().min(1).max(100),
-  state: z.string().min(1).max(100),
-  pincode: z.string().regex(/^\d{6}$/, 'Pincode must be 6 digits'),
-  landmark: z.string().max(200).optional(),
-  contactName: z.string().max(100).optional(),
-  contactPhone: z.string().max(15).optional(),
-});
+import { addressSchema } from '../utils/validators';
 
 export const createTripSchema = z.object({
   sourceOrgId: z.string().cuid('Invalid source organization ID'),

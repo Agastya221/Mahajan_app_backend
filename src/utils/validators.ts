@@ -9,6 +9,19 @@ export const emailSchema = z.string().email('Invalid email address');
 export const cuidSchema = z.string().cuid('Invalid ID format');
 export const gstinSchema = z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, 'Invalid GSTIN format').optional();
 
+// Structured address validator (Mandi/Flipkart style)
+export const addressSchema = z.object({
+  label: z.string().max(100).optional(),
+  line1: z.string().min(1).max(200),
+  line2: z.string().max(200).optional(),
+  city: z.string().min(1).max(100),
+  state: z.string().min(1).max(100),
+  pincode: z.string().regex(/^\d{6}$/, 'Pincode must be 6 digits'),
+  landmark: z.string().max(200).optional(),
+  contactName: z.string().max(100).optional(),
+  contactPhone: z.string().max(15).optional(),
+});
+
 // Pagination
 export const paginationSchema = z.object({
   page: z.number().int().positive().default(1),
