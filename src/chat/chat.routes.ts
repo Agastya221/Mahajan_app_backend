@@ -63,6 +63,20 @@ router.get('/threads/:threadId/messages', authenticate, chatController.getMessag
  */
 router.post('/threads/:threadId/messages', authenticate, chatController.sendMessage);
 
+/**
+ * @route   PATCH /api/v1/chat/threads/:threadId/messages/:messageId
+ * @desc    Edit a text message (sender only, within 15 minutes)
+ * @access  Private
+ */
+router.patch('/threads/:threadId/messages/:messageId', authenticate, chatController.editMessage);
+
+/**
+ * @route   DELETE /api/v1/chat/threads/:threadId/messages/:messageId
+ * @desc    Delete a message (for me or for everyone)
+ * @access  Private
+ */
+router.delete('/threads/:threadId/messages/:messageId', authenticate, chatController.deleteMessage);
+
 // ════════════════════════════════════════════
 // SEARCH & UNREAD
 // ════════════════════════════════════════════

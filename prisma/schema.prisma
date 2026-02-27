@@ -766,11 +766,9 @@ model ChatThread {
   accountId String?  @unique
   account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
-  title           String?
   type            String    @default("ORG_CHAT")
   lastMessageAt   DateTime?
   lastMessageText String?
-  unreadCount     Int       @default(0)
   isArchived      Boolean   @default(false)
   isPinned        Boolean   @default(false)
   pinnedAt        DateTime?
@@ -818,12 +816,21 @@ model ChatMessage {
   replyTo     ChatMessage?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies     ChatMessage[] @relation("MessageReplies")
 
+  // ✅ Location sharing (Swiggy-style: share truck driver's position)
   locationLat Float?
   locationLng Float?
 
+  // ✅ Soft delete: "Delete for everyone" (WhatsApp-style)
+  isDeletedForEveryone Boolean   @default(false)
+  deletedAt            DateTime?
+  deletedByUserId      String?
+
   attachments Attachment[]
 
-  // ✅ NEW: Optional trip context (trip cards, status updates appear in org-pair chat)
+  // ✅ Per-user "Delete for me" tracking
+  deletions ChatMessageDeletion[]
+
+  // ✅ Optional trip context (trip cards, status updates appear in org-pair chat)
   tripId String?
   trip   Trip?   @relation("TripMessages", fields: [tripId], references: [id], onDelete: SetNull)
 
@@ -838,6 +845,22 @@ model ChatMessage {
   @@index([senderUserId, createdAt])
   @@index([threadId, isRead, senderUserId])
   @@index([threadId, senderUserId, isRead])
+  @@index([threadId, isDeletedForEveryone])
+}
+
+// ✅ Per-user message deletion tracking ("Delete for me")
+// When a user deletes a message for themselves only, a row is created here.
+// Messages with a row here are filtered out from that user's view.
+model ChatMessageDeletion {
+  id        String      @id @default(cuid())
+  messageId String
+  message   ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String // The user who deleted this message for themselves
+
+  deletedAt DateTime @default(now())
+
+  @@unique([messageId, userId]) // One deletion record per user per message
+  @@index([userId])
 }
 
 // ============================================

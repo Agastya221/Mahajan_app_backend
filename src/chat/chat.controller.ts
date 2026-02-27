@@ -4,6 +4,8 @@ import {
   createThreadSchema,
   updateThreadSchema,
   sendMessageSchema,
+  editMessageSchema,
+  deleteMessageSchema,
   searchMessagesSchema,
   chatActionSchema,
   startChatByPhoneSchema,
@@ -170,7 +172,7 @@ export class ChatController {
   /**
    * POST /chat/threads/:threadId/messages
    * Send a message in a thread.
-   * Body: { content, messageType, attachmentIds?, replyToId?, clientMessageId?, tripId? }
+   * Body: { content, messageType, attachmentIds?, replyToId?, clientMessageId?, tripId?, locationLat?, locationLng? }
    */
   sendMessage = asyncHandler(async (req: AuthRequest, res: Response) => {
     const { threadId } = req.params;
@@ -181,6 +183,43 @@ export class ChatController {
     res.status(201).json({
       success: true,
       data: message,
+    });
+  });
+
+  /**
+   * PATCH /chat/threads/:threadId/messages/:messageId
+   * Edit a text message (within 15 minutes, sender only).
+   * Body: { content: "new text" }
+   */
+  editMessage = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId, messageId } = req.params;
+    const { content } = editMessageSchema.parse(req.body);
+
+    const message = await chatService.editMessage(threadId, messageId, content, req.user!.id);
+
+    res.json({
+      success: true,
+      data: message,
+      message: 'Message edited',
+    });
+  });
+
+  /**
+   * DELETE /chat/threads/:threadId/messages/:messageId
+   * Delete a message. Body: { deleteFor: "me" | "everyone" }
+   * - "me": hides message only for the requesting user
+   * - "everyone": soft-deletes for all (sender only, within 60 min)
+   */
+  deleteMessage = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId, messageId } = req.params;
+    const { deleteFor } = deleteMessageSchema.parse(req.body);
+
+    const result = await chatService.deleteMessage(threadId, messageId, deleteFor, req.user!.id);
+
+    res.json({
+      success: true,
+      data: result,
+      message: deleteFor === 'everyone' ? 'Message deleted for everyone' : 'Message deleted for you',
     });
   });
 

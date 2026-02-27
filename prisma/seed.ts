@@ -277,14 +277,32 @@ async function main() {
       data: {
         sourceOrgId: nashikOrg.id, destinationOrgId: mumbaiOrg.id,
         truckId: truck2.id, createdByUserId: agastya.id,
+        driverId: dp2.id,
         startPoint: 'Pimpalgaon APMC', endPoint: 'APMC Vashi',
+        startTime: days(-1),
+        eta: days(-0.8),
+        estimatedDistance: 185,
+        estimatedArrival: days(-0.8),
         status: TripStatus.CREATED,
-        notes: 'Capsicum and cauliflower — need to assign driver',
+        notes: 'Capsicum and cauliflower — planned for tomorrow',
         sourceAddress: nashikAddress,
         destinationAddress: mumbaiAddress,
       },
     });
-    await prisma.tripEvent.create({ data: { tripId: tripC.id, eventType: TripEventType.TRIP_CREATED, description: 'Trip created, driver TBD', createdByUserId: agastya.id } });
+    await prisma.tripEvent.create({ data: { tripId: tripC.id, eventType: TripEventType.TRIP_CREATED, description: 'Trip created', createdByUserId: agastya.id } });
+
+    // Create a draft load card for Trip C
+    await prisma.tripLoadCard.create({
+      data: {
+        tripId: tripC.id,
+        loadedAt: new Date(),
+        remarks: 'Draft load card for tomorrow',
+        totalItems: 1,
+        totalQuantity: 50,
+        totalAmount: 20000,
+        createdByUserId: agastya.id
+      }
+    });
   }
   console.log(`✅ Trip C (CREATED): Nashik → Mumbai (pending)`);
 
@@ -543,11 +561,15 @@ async function main() {
           createdByUserId: creator.id,
           startPoint: `Market in ${srcOrg.city}`,
           endPoint: `Market in ${destOrg.city}`,
+          startTime: new Date(Date.now() - 3600000),
+          eta: new Date(Date.now() + 36000000),
+          estimatedDistance: 320,
+          estimatedArrival: new Date(Date.now() + 36000000),
           status: status,
           notes: `Bulk generated trip with status ${status}`,
           sourceAddress: srcOrg.address ? (srcOrg.address as any) : undefined,
           destinationAddress: destOrg.address ? (destOrg.address as any) : undefined,
-          ...(status === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: 'Vehicle Breakdown' } : {}),
+          ...(status === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: 'Vehicle Breakdown', cancelledBy: creator.id } : {}),
         }
       });
 
@@ -653,6 +675,89 @@ async function main() {
   }
 
   console.log(`✅ Bulk Trips created (${bulkTripCount} trips for all statuses)`);
+
+  // ════════════════════════════════════════════
+  // 10. GUARANTEE NO NULL RELATIONS
+  // ════════════════════════════════════════════
+  const allTrips = await prisma.trip.findMany({
+    include: { loadCard: true, receiveCard: true, latestLoc: true, driver: true }
+  });
+
+  for (const t of allTrips) {
+    if (!t.loadCard) {
+      const lc = await prisma.tripLoadCard.create({
+        data: {
+          tripId: t.id,
+          loadedAt: new Date(Date.now() - 86400000),
+          remarks: 'Auto-filled draft load card',
+          totalItems: 1,
+          totalQuantity: 100,
+          totalAmount: 50000,
+          createdByUserId: t.createdByUserId
+        }
+      });
+      await prisma.loadItem.create({
+        data: {
+          loadCardId: lc.id,
+          itemName: 'Mixed Produce',
+          quantity: 100,
+          unit: QuantityUnit.KG,
+          rate: 500,
+          amount: 50000,
+          sortOrder: 1
+        }
+      });
+    }
+
+    if (!t.receiveCard) {
+      const draftRc = await prisma.tripReceiveCard.create({
+        data: {
+          tripId: t.id,
+          receivedAt: new Date(),
+          remarks: 'Auto-filled draft receive card',
+          totalItems: 1,
+          totalQuantity: 95,
+          totalAmount: 47500,
+          totalShortage: 5,
+          shortagePercent: 5,
+          status: 'PENDING',
+          createdByUserId: t.createdByUserId
+        }
+      });
+      const lc = await prisma.tripLoadCard.findUnique({ where: { tripId: t.id }, include: { items: true } });
+      if (lc && lc.items.length > 0) {
+        await prisma.receiveItem.create({
+          data: {
+            receiveCardId: draftRc.id,
+            loadItemId: lc.items[0].id,
+            itemName: 'Mixed Produce',
+            quantity: 95,
+            unit: QuantityUnit.KG,
+            rate: 500,
+            amount: 47500,
+            shortage: 5,
+            shortagePercent: 5,
+            sortOrder: 1
+          }
+        });
+      }
+    }
+
+    if (!t.latestLoc) {
+      await prisma.tripLatestLocation.create({
+        data: {
+          tripId: t.id,
+          lat: 19.0760 + (Math.random() - 0.5) * 0.1,
+          lng: 72.8777 + (Math.random() - 0.5) * 0.1,
+          speed: 45,
+          heading: 180,
+          accuracy: 10,
+          capturedAt: new Date()
+        }
+      });
+    }
+  }
+  console.log(`✅ Filled missing relations for ${allTrips.length} trips to ensure 0 nulls.`);
 
   // ════════════════════════════════════════════
   // SUMMARY

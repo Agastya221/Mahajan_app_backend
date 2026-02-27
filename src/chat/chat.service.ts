@@ -1,9 +1,13 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
-import { CreateThreadDto, SendMessageDto } from './chat.dto';
+import { CreateThreadDto, SendMessageDto, EditMessageDto, DeleteMessageDto } from './chat.dto';
 import { redisPublisher } from '../config/redis';
 import { Prisma } from '@prisma/client';
 import { logger } from '../utils/logger';
+
+// ✅ Max time (in minutes) allowed for editing/deleting-for-everyone
+const EDIT_WINDOW_MINUTES = 15;
+const DELETE_FOR_EVERYONE_WINDOW_MINUTES = 60;
 
 // ✅ Helper: Normalize org pair ordering for consistent unique lookups
 // Always stores the smaller cuid as orgId to prevent (A,B) vs (B,A) duplicates
@@ -280,7 +284,7 @@ export class ChatService {
   }
 
   // ============================================
-  // ✅ Get all threads for user
+  // ✅ Get all threads for user (with per-user unread counts)
   // ============================================
   async getThreads(userId: string, filters?: { page?: number; limit?: number }) {
     const memberships = await prisma.orgMember.findMany({
@@ -324,6 +328,7 @@ export class ChatService {
             },
           },
           messages: {
+            where: { isDeletedForEveryone: false },
             orderBy: { createdAt: 'desc' },
             take: 1,
           },
@@ -338,8 +343,25 @@ export class ChatService {
       prisma.chatThread.count({ where }),
     ]);
 
+    // ✅ Compute unread count per-user (only messages NOT sent by this user, NOT read)
+    const threadsWithUnread = await Promise.all(
+      threads.map(async (thread) => {
+        const unreadCount = await prisma.chatMessage.count({
+          where: {
+            threadId: thread.id,
+            senderUserId: { not: userId },
+            isRead: false,
+            isDeletedForEveryone: false,
+            // Exclude messages deleted for this user
+            deletions: { none: { userId } },
+          },
+        });
+        return { ...thread, unreadCount };
+      })
+    );
+
     return {
-      threads,
+      threads: threadsWithUnread,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -377,13 +399,20 @@ export class ChatService {
   }
 
   // ============================================
-  // ✅ Get messages (with trip context)
+  // ✅ Get messages (with trip context, filtered for deletions)
   // ============================================
   async getMessages(threadId: string, userId: string, limit = 50, offset = 0) {
     await this.getThreadById(threadId, userId);
 
+    // ✅ Filter: exclude deleted-for-everyone AND deleted-for-me messages
+    const whereClause: Prisma.ChatMessageWhereInput = {
+      threadId,
+      isDeletedForEveryone: false,
+      deletions: { none: { userId } },
+    };
+
     const messages = await prisma.chatMessage.findMany({
-      where: { threadId },
+      where: whereClause,
       include: {
         senderUser: {
           select: { id: true, name: true, phone: true },
@@ -407,7 +436,7 @@ export class ChatService {
         invoice: {
           select: { id: true, invoiceNumber: true, total: true, createdAt: true },
         },
-        // ✅ NEW: Include trip context for trip-related messages
+        // ✅ Include trip context for trip-related messages
         trip: {
           select: {
             id: true, status: true, startPoint: true, endPoint: true,
@@ -426,7 +455,7 @@ export class ChatService {
       skip: offset,
     });
 
-    const total = await prisma.chatMessage.count({ where: { threadId } });
+    const total = await prisma.chatMessage.count({ where: whereClause });
 
     return {
       messages: messages.reverse(),
@@ -491,6 +520,7 @@ export class ChatService {
     else if (data.messageType === 'PDF') previewText = '📄 Document';
     else if (data.messageType === 'FILE') previewText = '📎 File';
     else if (data.messageType === 'AUDIO') previewText = '🎤 Voice message';
+    else if (data.messageType === 'LOCATION') previewText = '📍 Location';
 
     let messageId: string;
 
@@ -506,6 +536,8 @@ export class ChatService {
             replyToId: data.replyToId || null,
             clientMessageId: data.clientMessageId || null,
             tripId: data.tripId || null, // ✅ Trip context
+            locationLat: data.locationLat || null, // ✅ Location sharing
+            locationLng: data.locationLng || null,
           },
           include: {
             senderUser: { select: { id: true, name: true, phone: true } },
@@ -528,14 +560,13 @@ export class ChatService {
           });
         }
 
-        // Update thread metadata
+        // Update thread metadata (unreadCount removed — computed dynamically per-user)
         await tx.chatThread.update({
           where: { id: threadId },
           data: {
             updatedAt: new Date(),
             lastMessageAt: new Date(),
             lastMessageText: previewText,
-            unreadCount: { increment: 1 },
           },
         });
 
@@ -626,7 +657,7 @@ export class ChatService {
   }
 
   // ============================================
-  // ✅ Read Receipts
+  // ✅ Read Receipts (no more unreadCount on thread — computed dynamically)
   // ============================================
   async markMessagesAsRead(threadId: string, userId: string, readUpToMsgId?: string) {
     await this.getThreadById(threadId, userId);
@@ -635,6 +666,7 @@ export class ChatService {
       threadId,
       senderUserId: { not: userId },
       isRead: false,
+      isDeletedForEveryone: false,
     };
 
     if (readUpToMsgId) {
@@ -644,23 +676,12 @@ export class ChatService {
       }
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.chatMessage.updateMany({
-        where: whereClause,
-        data: { isRead: true, readAt: new Date() },
-      });
-
-      const remainingUnread = await tx.chatMessage.count({
-        where: { threadId, senderUserId: { not: userId }, isRead: false }
-      });
-
-      await tx.chatThread.update({
-        where: { id: threadId },
-        data: { unreadCount: remainingUnread },
-      });
-
-      return { count: updated.count, readUpTo: readUpToMsgId };
+    const updated = await prisma.chatMessage.updateMany({
+      where: whereClause,
+      data: { isRead: true, readAt: new Date() },
     });
+
+    const result = { count: updated.count, readUpTo: readUpToMsgId };
 
     // Broadcast read receipt
     try {
@@ -739,7 +760,227 @@ export class ChatService {
     });
   }
 
-  // ✅ Get Unread Counts
+  // ============================================
+  // ✅ EDIT MESSAGE (WhatsApp-style: sender only, within time limit)
+  // ============================================
+  async editMessage(threadId: string, messageId: string, newContent: string, userId: string) {
+    // 1. Verify thread access
+    await this.getThreadById(threadId, userId);
+
+    // 2. Find the message
+    const message = await prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) throw new NotFoundError('Message not found');
+    if (message.threadId !== threadId) throw new ValidationError('Message does not belong to this thread');
+    if (message.senderUserId !== userId) throw new ForbiddenError('You can only edit your own messages');
+    if (message.messageType !== 'TEXT') throw new ValidationError('Only TEXT messages can be edited');
+    if (message.isDeletedForEveryone) throw new ValidationError('Cannot edit a deleted message');
+
+    // 3. Check time window (15 minutes)
+    const minutesSince = (Date.now() - message.createdAt.getTime()) / (1000 * 60);
+    if (minutesSince > EDIT_WINDOW_MINUTES) {
+      throw new ValidationError(`Messages can only be edited within ${EDIT_WINDOW_MINUTES} minutes of sending`);
+    }
+
+    // 4. Update the message
+    const updatedMessage = await prisma.chatMessage.update({
+      where: { id: messageId },
+      data: {
+        content: newContent,
+        isEdited: true,
+        editedAt: new Date(),
+      },
+      include: {
+        senderUser: { select: { id: true, name: true, phone: true } },
+        attachments: {
+          select: { id: true, url: true, fileName: true, mimeType: true, sizeBytes: true, type: true },
+        },
+        replyTo: {
+          select: {
+            id: true, content: true, messageType: true,
+            senderUser: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // 5. Update thread's lastMessageText if this was the latest message
+    const latestMsg = await prisma.chatMessage.findFirst({
+      where: { threadId, isDeletedForEveryone: false },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (latestMsg?.id === messageId) {
+      await prisma.chatThread.update({
+        where: { id: threadId },
+        data: { lastMessageText: newContent.substring(0, 100) },
+      });
+    }
+
+    // 6. Broadcast via WebSocket
+    try {
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:edit', updatedMessage);
+      } else {
+        await redisPublisher.publish(
+          `thread:${threadId}:edit`,
+          JSON.stringify(updatedMessage)
+        );
+      }
+    } catch (error) {
+      console.error('Failed to broadcast edit:', error);
+    }
+
+    return updatedMessage;
+  }
+
+  // ============================================
+  // ✅ DELETE MESSAGE (WhatsApp-style: "Delete for me" + "Delete for everyone")
+  // ============================================
+  async deleteMessage(threadId: string, messageId: string, deleteFor: 'me' | 'everyone', userId: string) {
+    // 1. Verify thread access
+    await this.getThreadById(threadId, userId);
+
+    // 2. Find the message
+    const message = await prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) throw new NotFoundError('Message not found');
+    if (message.threadId !== threadId) throw new ValidationError('Message does not belong to this thread');
+
+    if (deleteFor === 'everyone') {
+      // Only sender can delete for everyone
+      if (message.senderUserId !== userId) {
+        throw new ForbiddenError('Only the sender can delete a message for everyone');
+      }
+
+      // Check time window (60 minutes for delete-for-everyone)
+      const minutesSince = (Date.now() - message.createdAt.getTime()) / (1000 * 60);
+      if (minutesSince > DELETE_FOR_EVERYONE_WINDOW_MINUTES) {
+        throw new ValidationError(`Messages can only be deleted for everyone within ${DELETE_FOR_EVERYONE_WINDOW_MINUTES} minutes`);
+      }
+
+      // Already deleted check
+      if (message.isDeletedForEveryone) {
+        throw new ValidationError('Message is already deleted');
+      }
+
+      // Soft delete for everyone
+      await prisma.chatMessage.update({
+        where: { id: messageId },
+        data: {
+          isDeletedForEveryone: true,
+          deletedAt: new Date(),
+          deletedByUserId: userId,
+          content: null, // Clear content 
+          metadata: Prisma.JsonNull,
+          locationLat: null,
+          locationLng: null,
+        },
+      });
+
+      // Update thread's lastMessageText if this was the latest
+      const latestMsg = await prisma.chatMessage.findFirst({
+        where: { threadId, isDeletedForEveryone: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (latestMsg) {
+        await prisma.chatThread.update({
+          where: { id: threadId },
+          data: { lastMessageText: latestMsg.content?.substring(0, 100) || '' },
+        });
+      } else {
+        await prisma.chatThread.update({
+          where: { id: threadId },
+          data: { lastMessageText: null },
+        });
+      }
+
+      // Broadcast delete event
+      try {
+        if ((global as any).socketGateway) {
+          (global as any).socketGateway.broadcastToChat(threadId, 'chat:delete', {
+            messageId, deletedFor: 'everyone', deletedByUserId: userId,
+          });
+        } else {
+          await redisPublisher.publish(
+            `thread:${threadId}:delete`,
+            JSON.stringify({ messageId, deletedFor: 'everyone', deletedByUserId: userId })
+          );
+        }
+      } catch (error) {
+        console.error('Failed to broadcast delete:', error);
+      }
+
+      return { messageId, deletedFor: 'everyone' };
+
+    } else {
+      // "Delete for me" — create a per-user deletion record
+      await prisma.chatMessageDeletion.upsert({
+        where: {
+          messageId_userId: { messageId, userId },
+        },
+        update: {}, // Already deleted for this user
+        create: {
+          messageId,
+          userId,
+        },
+      });
+
+      return { messageId, deletedFor: 'me' };
+    }
+  }
+
+  // ============================================
+  // ✅ SEND LOCATION (Swiggy-style: share truck driver's current position)
+  // ============================================
+  async sendLocation(threadId: string, lat: number, lng: number, userId: string, tripId?: string) {
+    // Build metadata with nearby info if tripId is provided
+    let metadata: any = { lat, lng };
+    let content = '📍 Shared location';
+
+    if (tripId) {
+      const trip = await prisma.trip.findUnique({
+        where: { id: tripId },
+        select: {
+          id: true,
+          status: true,
+          startPoint: true,
+          endPoint: true,
+          truck: { select: { number: true } },
+          driver: {
+            include: { user: { select: { name: true } } },
+          },
+        },
+      });
+
+      if (trip) {
+        metadata = {
+          ...metadata,
+          tripId: trip.id,
+          truckNumber: trip.truck?.number,
+          driverName: trip.driver?.user?.name,
+          status: trip.status,
+          startPoint: trip.startPoint,
+          endPoint: trip.endPoint,
+        };
+        content = `📍 Live location: ${trip.truck?.number || 'Truck'} (${trip.driver?.user?.name || 'Driver'})`;
+      }
+    }
+
+    return this.sendMessage(threadId, {
+      content,
+      messageType: 'LOCATION',
+      locationLat: lat,
+      locationLng: lng,
+      tripId,
+      metadata,
+    } as any, userId);
+  }
+
+  // ✅ Get Unread Counts (computed per-user, not stored on thread)
   async getUnreadCounts(userId: string) {
     const memberships = await prisma.orgMember.findMany({
       where: { userId },
@@ -749,19 +990,40 @@ export class ChatService {
 
     if (orgIds.length === 0) return [];
 
-    return prisma.chatThread.findMany({
+    // Get all threads for this user's orgs
+    const threads = await prisma.chatThread.findMany({
       where: {
         OR: [
           { orgId: { in: orgIds } },
           { counterpartyOrgId: { in: orgIds } },
         ],
-        unreadCount: { gt: 0 },
       },
-      select: { id: true, unreadCount: true },
+      select: { id: true },
     });
+
+    if (threads.length === 0) return [];
+
+    // Compute unread counts per thread for THIS user
+    const results = await Promise.all(
+      threads.map(async (thread) => {
+        const unreadCount = await prisma.chatMessage.count({
+          where: {
+            threadId: thread.id,
+            senderUserId: { not: userId },
+            isRead: false,
+            isDeletedForEveryone: false,
+            deletions: { none: { userId } },
+          },
+        });
+        return { id: thread.id, unreadCount };
+      })
+    );
+
+    // Only return threads with unread > 0
+    return results.filter(r => r.unreadCount > 0);
   }
 
-  // ✅ Message Search
+  // ✅ Message Search (excludes deleted messages)
   async searchMessages(orgId: string, userId: string, query: string) {
     const membership = await prisma.orgMember.findFirst({
       where: { userId, orgId },
@@ -776,6 +1038,8 @@ export class ChatService {
             { counterpartyOrgId: orgId },
           ],
         },
+        isDeletedForEveryone: false,
+        deletions: { none: { userId } },
         OR: [
           { content: { contains: query, mode: 'insensitive' } },
           { payment: { reference: { contains: query } } },
@@ -784,7 +1048,7 @@ export class ChatService {
       },
       include: {
         thread: {
-          select: { id: true, title: true, orgId: true, counterpartyOrgId: true },
+          select: { id: true, orgId: true, counterpartyOrgId: true },
         },
         senderUser: { select: { id: true, name: true } },
         payment: { select: { id: true, amount: true, tag: true } },
@@ -901,7 +1165,6 @@ export class ChatService {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
           lastMessageText: content,
-          unreadCount: { increment: 1 },
         },
       });
 
@@ -977,7 +1240,6 @@ export class ChatService {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
           lastMessageText: content.substring(0, 100),
-          unreadCount: { increment: 1 },
         },
       });
 

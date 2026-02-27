@@ -1,8 +1,8 @@
 # Mahajan Network Platform — API Documentation
 
 **Base URL:** `http://localhost:3000/api/v1`  
-**Version:** 2.3 (org-pair chat architecture)  
-**Last Updated:** 2026-02-23  
+**Version:** 2.4 (chat edit/delete/location, per-user unread counts)  
+**Last Updated:** 2026-02-27  
 **Next:** See [REST v3 Refactoring Plan](./REST_V3_REFACTOR_PLAN.md) for upcoming API structure improvements.
 
 ---
@@ -1174,6 +1174,32 @@ GET /ledger/accounts/:accountId/payments?page=1&limit=20
 
 ## 10. Chat
 
+> **Architecture:** One chat thread per org-pair (like WhatsApp). Trips, payments, and invoices appear as rich cards inside the conversation.
+
+### Thread Object Shape
+```json
+{
+  "id": "...",
+  "orgId": "...",
+  "counterpartyOrgId": "...",
+  "accountId": "...",
+  "type": "ORG_CHAT",
+  "lastMessageAt": "2026-02-27T11:41:17.261Z",
+  "lastMessageText": "Hi",
+  "unreadCount": 3,
+  "isArchived": false,
+  "isPinned": false,
+  "pinnedAt": null,
+  "org": { "id": "...", "name": "Mahajan Fruits & Vegetables, Nashik", "gstin": "..." },
+  "counterpartyOrg": { "id": "...", "name": "Shaikh Trading Co., Vashi", "gstin": "..." },
+  "account": { "id": "...", "ownerOrgId": "...", "counterpartyOrgId": "...", "balance": "36500000" }
+}
+```
+
+> ⚠️ **`unreadCount` is now computed per-user.** It counts only messages NOT sent by you and NOT yet read. Sender always sees `0` for their own messages. The `title` field has been removed — use `org.name` / `counterpartyOrg.name` to display the chat name.
+
+---
+
 ### 10.1 Create/Get Thread
 ```http
 POST /chat/threads
@@ -1201,7 +1227,7 @@ POST /chat/start-by-phone
 
 **Auth:** Private
 
-**Description:** Main entry point for the "WhatsApp style" Add Mahajan functionality. 
+**Description:** Main entry point for the "WhatsApp style" Add Mahajan functionality.
 - CASE A: Real Org exists → Returns Chat Thread
 - CASE B: Placeholder Org exists → Returns Chat Thread
 - CASE C: No Org exists → Generates an invite (`MahajanInvite`), creates a placeholder Org, and returns the newly connected Chat Thread.
@@ -1219,7 +1245,7 @@ POST /chat/start-by-phone
   "success": true,
   "data": { ...ThreadObject },
   "message": "Thread created",
-  "inviteRequired": true|false
+  "inviteRequired": true
 }
 ```
 
@@ -1231,6 +1257,8 @@ GET /chat/threads?page=1&limit=20
 ```
 
 **Auth:** Private
+
+**Response:** Array of Thread Objects, each with a real-time `unreadCount` field computed specifically for the requesting user.
 
 ---
 
@@ -1250,6 +1278,8 @@ GET /chat/threads/:threadId/messages?limit=50&offset=0
 
 **Auth:** Private
 
+**Note:** Messages deleted for everyone (`isDeletedForEveryone: true`) and messages deleted by the requesting user ("delete for me") are automatically excluded from this response.
+
 **Response:**
 ```json
 {
@@ -1260,12 +1290,21 @@ GET /chat/threads/:threadId/messages?limit=50&offset=0
         "id": "...",
         "content": "Payment received",
         "messageType": "TEXT",
-        "senderUser": {...},
-        "createdAt": "2026-02-13T12:00:00Z",
-        "isRead": false
+        "senderUser": { "id": "...", "name": "...", "phone": "..." },
+        "isRead": false,
+        "isDelivered": true,
+        "isEdited": false,
+        "editedAt": null,
+        "replyToId": null,
+        "replyTo": null,
+        "locationLat": null,
+        "locationLng": null,
+        "isDeletedForEveryone": false,
+        "attachments": [],
+        "createdAt": "2026-02-27T11:41:17.162Z"
       }
     ],
-    "pagination": {...}
+    "pagination": { "total": 42, "limit": 50, "offset": 0, "hasMore": false }
   }
 }
 ```
@@ -1284,7 +1323,9 @@ POST /chat/threads/:threadId/messages
 {
   "content": "Payment sent via UPI",
   "messageType": "TEXT",
-  "tripId": "..." // Optional: links message to a specific trip context
+  "replyToId": "...",          // Optional: reply to a specific message
+  "clientMessageId": "...",   // Optional: client-generated ID for idempotency
+  "tripId": "..."              // Optional: links message to a specific trip context
 }
 ```
 
@@ -1304,6 +1345,16 @@ POST /chat/threads/:threadId/messages
 }
 ```
 
+**Request Body (Location — Swiggy-style truck tracking):**
+```json
+{
+  "messageType": "LOCATION",
+  "locationLat": 19.076,
+  "locationLng": 72.877,
+  "tripId": "..."   // Optional: enriches with truck/driver metadata
+}
+```
+
 **Supported `messageType` values:**
 | Type | Requires | Preview Text |
 |------|----------|--------------|
@@ -1312,6 +1363,7 @@ POST /chat/threads/:threadId/messages
 | `PDF` | `attachmentIds` | 📄 Document |
 | `FILE` | `attachmentIds` | 📎 File |
 | `AUDIO` | `attachmentIds` | 🎤 Voice message |
+| `LOCATION` | `locationLat` + `locationLng` | 📍 Location |
 | `TRIP_CARD` | `tripId` | 🚚 Trip Info |
 
 **Response (includes attachments for playback):**
@@ -1336,6 +1388,101 @@ POST /chat/threads/:threadId/messages
   }
 }
 ```
+
+---
+
+### 10.5.1 Edit Message
+```http
+PATCH /chat/threads/:threadId/messages/:messageId
+```
+
+**Auth:** Private
+
+**Description:** Edit a previously sent message.
+
+**Rules:**
+- ✅ Only the **original sender** can edit
+- ✅ Only **TEXT** messages can be edited
+- ✅ Must be within **15 minutes** of sending
+- ❌ Cannot edit a deleted message
+
+**Request Body:**
+```json
+{
+  "content": "Updated message content"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Message edited",
+  "data": {
+    "id": "...",
+    "content": "Updated message content",
+    "isEdited": true,
+    "editedAt": "2026-02-27T11:45:00.000Z",
+    "messageType": "TEXT",
+    "senderUser": { "id": "...", "name": "..." }
+  }
+}
+```
+
+**Error cases:**
+- `403` — Not the original sender
+- `400` — Not a TEXT message, or message is deleted
+- `400` — Edit window (15 min) has expired
+
+**WebSocket:** Broadcasts `chat:edit` event to all connected clients in the thread room.
+
+---
+
+### 10.5.2 Delete Message
+```http
+DELETE /chat/threads/:threadId/messages/:messageId
+```
+
+**Auth:** Private
+
+**Description:** Delete a message. Two modes:
+
+| Mode | Who | Time Limit | Effect |
+|------|-----|-----------|--------|
+| `"me"` | Anyone in the thread | No limit | Message hidden only for you |
+| `"everyone"` | Sender only | 60 minutes | Message removed for all parties. Content wiped. |
+
+**Request Body:**
+```json
+{
+  "deleteFor": "me"
+}
+```
+or
+```json
+{
+  "deleteFor": "everyone"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Message deleted for everyone",
+  "data": {
+    "messageId": "...",
+    "deletedFor": "everyone"
+  }
+}
+```
+
+**Error cases:**
+- `403` — Tried `deleteFor: "everyone"` but not the sender
+- `400` — Delete-for-everyone window (60 min) has expired
+- `400` — Message already deleted
+
+**WebSocket:** `deleteFor: "everyone"` broadcasts `chat:delete` event: `{ messageId, deletedFor: "everyone", deletedByUserId }`.
 
 ---
 
@@ -1375,18 +1522,22 @@ GET /chat/unread
 
 **Auth:** Private
 
+**Description:** Returns per-thread unread counts for the requesting user only. The sender never sees their own messages counted here.
+
 **Response:**
 ```json
 {
   "success": true,
   "data": [
     {
-      "threadId": "...",
+      "id": "cmm212br8001oesl1l3ekz5uo",
       "unreadCount": 5
     }
   ]
 }
 ```
+
+> 🔑 **Key:** Only threads with `unreadCount > 0` are returned. Threads where you have 0 unread are omitted for efficiency.
 
 ---
 
@@ -1397,11 +1548,13 @@ GET /chat/messages?orgId=...&q=payment
 
 **Auth:** Private
 
+**Note:** Deleted messages (for everyone or for you) are excluded from search results.
+
 ---
 
 ### 10.9 Perform Action (Rich Actions)
 ```http
-POST /chat/threads/:threadId/action
+POST /chat/threads/:threadId/actions
 ```
 
 **Auth:** Private
@@ -1823,8 +1976,12 @@ const socket = io('ws://localhost:3000', {
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `new:message` | `ChatMessage` | New chat message |
-| `location:update` | `{ tripId, lat, lng, ... }` | Real-time GPS update |
+| `chat:message` | Full `ChatMessage` object | New chat message received |
+| `chat:read` | `{ userId, readAt, count, readUpTo }` | Messages marked as read |
+| `chat:delivered` | `{ userId, deliveredAt, count, deliveredUpTo }` | Messages marked as delivered |
+| `chat:edit` | Full updated `ChatMessage` object | Message was edited by sender |
+| `chat:delete` | `{ messageId, deletedFor, deletedByUserId }` | Message deleted for everyone |
+| `location:update` | `{ tripId, lat, lng, speed, heading }` | Real-time GPS update |
 | `trip:status` | `{ tripId, status }` | Trip status changed |
 | `payment:update` | `Payment` | Payment status changed |
 

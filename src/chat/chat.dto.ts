@@ -31,7 +31,7 @@ export const updateThreadSchema = z.object({
   }
 );
 
-// ✅ Send message — optional tripId for trip context
+// ✅ Send message — optional tripId for trip context, location support
 export const sendMessageSchema = z.object({
   content: z.string().max(5000).optional(),
   messageType: z.nativeEnum(ChatMessageType).default('TEXT'),
@@ -39,6 +39,9 @@ export const sendMessageSchema = z.object({
   replyToId: z.string().cuid().optional(),
   clientMessageId: z.string().optional(),
   tripId: z.string().cuid().optional(),
+  // ✅ Location sharing (Swiggy-style driver tracking)
+  locationLat: z.number().min(-90).max(90).optional(),
+  locationLng: z.number().min(-180).max(180).optional(),
 }).refine(
   (data) => {
     if (data.messageType === 'TEXT') {
@@ -47,12 +50,25 @@ export const sendMessageSchema = z.object({
     if (['IMAGE', 'PDF', 'FILE', 'AUDIO'].includes(data.messageType)) {
       return data.attachmentIds && data.attachmentIds.length > 0;
     }
+    if (data.messageType === 'LOCATION') {
+      return data.locationLat !== undefined && data.locationLng !== undefined;
+    }
     return true;
   },
   {
-    message: 'TEXT messages require content. IMAGE/PDF/FILE/AUDIO messages require attachments.',
+    message: 'TEXT messages require content. IMAGE/PDF/FILE/AUDIO messages require attachments. LOCATION messages require locationLat and locationLng.',
   }
 );
+
+// ✅ Edit message — only TEXT, within 15 minutes, by original sender
+export const editMessageSchema = z.object({
+  content: z.string().min(1).max(5000, 'Message too long'),
+});
+
+// ✅ Delete message — "Delete for me" or "Delete for everyone"
+export const deleteMessageSchema = z.object({
+  deleteFor: z.enum(['me', 'everyone']),
+});
 
 // ✅ Search messages
 export const searchMessagesSchema = z.object({
@@ -78,5 +94,7 @@ export const chatActionSchema = z.object({
 export type CreateThreadDto = z.infer<typeof createThreadSchema>;
 export type UpdateThreadDto = z.infer<typeof updateThreadSchema>;
 export type SendMessageDto = z.infer<typeof sendMessageSchema>;
+export type EditMessageDto = z.infer<typeof editMessageSchema>;
+export type DeleteMessageDto = z.infer<typeof deleteMessageSchema>;
 export type ChatActionDto = z.infer<typeof chatActionSchema>;
 export type StartChatByPhoneDto = z.infer<typeof startChatByPhoneSchema>;
