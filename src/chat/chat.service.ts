@@ -343,16 +343,17 @@ export class ChatService {
       prisma.chatThread.count({ where }),
     ]);
 
-    // ✅ Compute unread count per-user (only messages NOT sent by this user, NOT read)
+    // ✅ Compute unread count per-user (only messages from OTHER users, NOT read)
+    // Excludes: your own messages, system messages (null sender), deleted messages
     const threadsWithUnread = await Promise.all(
       threads.map(async (thread) => {
         const unreadCount = await prisma.chatMessage.count({
           where: {
             threadId: thread.id,
-            senderUserId: { not: userId },
+            senderUserId: { not: null },       // Exclude system messages
+            NOT: { senderUserId: userId },      // Exclude MY messages
             isRead: false,
             isDeletedForEveryone: false,
-            // Exclude messages deleted for this user
             deletions: { none: { userId } },
           },
         });
@@ -457,6 +458,37 @@ export class ChatService {
 
     const total = await prisma.chatMessage.count({ where: whereClause });
 
+    // ✅ AUTO-MARK AS READ: When user opens a chat and fetches messages,
+    // mark all unread messages from OTHER users as read (like WhatsApp).
+    // This runs in the background — don't block the response.
+    const markReadPromise = prisma.chatMessage.updateMany({
+      where: {
+        threadId,
+        senderUserId: { not: null },
+        NOT: { senderUserId: userId },
+        isRead: false,
+        isDeletedForEveryone: false,
+      },
+      data: { isRead: true, readAt: new Date() },
+    });
+
+    markReadPromise
+      .then((result) => {
+        if (result.count > 0) {
+          // Broadcast read receipt so sender sees blue ticks
+          try {
+            if ((global as any).socketGateway) {
+              (global as any).socketGateway.broadcastToChat(threadId, 'chat:read', {
+                userId, readAt: new Date(), count: result.count,
+              });
+            }
+          } catch (err) {
+            console.error('Failed to broadcast auto-read receipt:', err);
+          }
+        }
+      })
+      .catch((err) => console.error('Failed to auto-mark messages as read:', err));
+
     return {
       messages: messages.reverse(),
       pagination: {
@@ -535,9 +567,12 @@ export class ChatService {
             metadata: data.metadata || Prisma.JsonNull,
             replyToId: data.replyToId || null,
             clientMessageId: data.clientMessageId || null,
-            tripId: data.tripId || null, // ✅ Trip context
-            locationLat: data.locationLat || null, // ✅ Location sharing
+            tripId: data.tripId || null,
+            locationLat: data.locationLat || null,
             locationLng: data.locationLng || null,
+            // NOTE: isRead stays false (default) — it means "receiver hasn't read it yet"
+            // The SENDER's unread count excludes their own messages via senderUserId filter,
+            // NOT via isRead. isRead is only flipped when the RECEIVER calls markMessagesAsRead.
           },
           include: {
             senderUser: { select: { id: true, name: true, phone: true } },
@@ -664,7 +699,8 @@ export class ChatService {
 
     let whereClause: any = {
       threadId,
-      senderUserId: { not: userId },
+      senderUserId: { not: null },      // Skip system messages (already isRead:true)
+      NOT: { senderUserId: userId },     // Skip my own messages (already isRead:true)
       isRead: false,
       isDeletedForEveryone: false,
     };
@@ -1004,12 +1040,14 @@ export class ChatService {
     if (threads.length === 0) return [];
 
     // Compute unread counts per thread for THIS user
+    // Only count messages from OTHER real users (not system, not self)
     const results = await Promise.all(
       threads.map(async (thread) => {
         const unreadCount = await prisma.chatMessage.count({
           where: {
             threadId: thread.id,
-            senderUserId: { not: userId },
+            senderUserId: { not: null },       // Exclude system messages
+            NOT: { senderUserId: userId },      // Exclude MY messages
             isRead: false,
             isDeletedForEveryone: false,
             deletions: { none: { userId } },
@@ -1142,10 +1180,16 @@ export class ChatService {
         data: {
           threadId: thread.id,
           content,
-          senderUserId: null, // System message
+          senderUserId: null, // System message — no human sender
           messageType: 'SYSTEM_MESSAGE',
           metadata: metadata || Prisma.JsonNull,
           tripId, // ✅ Link message to trip
+          // ✅ FIX: System messages are informational — mark as read/delivered
+          // so they never inflate unread counts for either side
+          isRead: true,
+          readAt: new Date(),
+          isDelivered: true,
+          deliveredAt: new Date(),
         },
         include: {
           senderUser: { select: { id: true, name: true, phone: true } },
@@ -1228,6 +1272,12 @@ export class ChatService {
           metadata: metadata || Prisma.JsonNull,
           paymentId: paymentId || null,
           invoiceId: invoiceId || null,
+          // System messages (no sender) → isRead:true (informational, shouldn't count as unread)
+          // User messages (has sender) → isRead:false (receiver hasn't read it yet)
+          isRead: !senderUserId,
+          readAt: !senderUserId ? new Date() : null,
+          isDelivered: !senderUserId,
+          deliveredAt: !senderUserId ? new Date() : null,
         },
         include: {
           senderUser: { select: { id: true, name: true, phone: true } },
