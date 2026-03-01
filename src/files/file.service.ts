@@ -214,6 +214,7 @@ export class FileService {
         receiveCard: { select: { tripId: true } },
         invoice: { select: { accountId: true } },
         payment: { select: { accountId: true } },
+        message: { select: { threadId: true } },
       },
     });
 
@@ -225,9 +226,24 @@ export class FileService {
     if (file.uploadedBy !== userId) {
       let hasAccess = false;
 
+      // Check via chat thread (chat attachments)
+      // If this file is attached to a chat message, allow any participant of the thread
+      if (file.message?.threadId) {
+        const thread = await prisma.chatThread.findUnique({
+          where: { id: file.message.threadId },
+          select: { orgId: true, counterpartyOrgId: true },
+        });
+        if (thread) {
+          const membership = await prisma.orgMember.findFirst({
+            where: { userId, orgId: { in: [thread.orgId, thread.counterpartyOrgId] } },
+          });
+          if (membership) hasAccess = true;
+        }
+      }
+
       // Check via trip (load card or receive card)
       const tripId = file.loadCard?.tripId || file.receiveCard?.tripId;
-      if (tripId) {
+      if (!hasAccess && tripId) {
         const trip = await prisma.trip.findUnique({ where: { id: tripId } });
         if (trip) {
           const membership = await prisma.orgMember.findFirst({
