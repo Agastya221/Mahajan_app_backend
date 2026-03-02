@@ -8,3 +8,13 @@ export const submitGstinSchema = z.object({
 });
 
 export type SubmitGstinDto = z.infer<typeof submitGstinSchema>;
+
+// ── Contact Discovery ──
+export const checkContactsSchema = z.object({
+  phones: z
+    .array(z.string().min(1))
+    .min(1, 'At least 1 phone number required')
+    .max(500, 'Maximum 500 phone numbers per request'),
+});
+
+export type CheckContactsDto = z.infer<typeof checkContactsSchema>;

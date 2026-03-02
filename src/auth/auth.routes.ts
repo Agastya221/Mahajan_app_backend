@@ -30,7 +30,7 @@ router.post('/register', authController.register);
 
 /**
  * @route   POST /api/v1/auth/refresh
- * @desc    Refresh access token using refresh token (rotates refresh token)
+ * @desc    Refresh access token using refresh token this refresh token is not that good we need to change it (rotates refresh token)
  * @access  Public
  */
 router.post('/refresh', authController.refreshToken);

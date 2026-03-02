@@ -345,8 +345,9 @@ export class ChatService {
 
     // ✅ Compute unread count per-user (only messages from OTHER users, NOT read)
     // Excludes: your own messages, system messages (null sender), deleted messages
-    const threadsWithUnread = await Promise.all(
+    const threadsWithMeta = await Promise.all(
       threads.map(async (thread) => {
+        // Unread count
         const unreadCount = await prisma.chatMessage.count({
           where: {
             threadId: thread.id,
@@ -357,18 +358,26 @@ export class ChatService {
             deletions: { none: { userId } },
           },
         });
-        return { ...thread, unreadCount };
+
+        // ✅ Counterparty account status — so frontend can show "Account Suspended" banner
+        const counterpartyOrgId = orgIds.includes(thread.orgId)
+          ? thread.counterpartyOrgId
+          : thread.orgId;
+
+        const counterpartyStatus = await this.getOrgAccountStatus(counterpartyOrgId);
+
+        return { ...thread, unreadCount, counterpartyStatus };
       })
     );
 
     return {
-      threads: threadsWithUnread,
+      threads: threadsWithMeta,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
 
   // ============================================
-  // ✅ Get thread by ID
+  // ✅ Get thread by ID (includes counterparty account status)
   // ============================================
   async getThreadById(threadId: string, userId: string) {
     const thread = await prisma.chatThread.findUnique({
@@ -396,7 +405,65 @@ export class ChatService {
     }
 
     await this.verifyThreadAccess(thread, userId);
-    return thread;
+
+    // ✅ Determine which org is "theirs" (counterparty from user's perspective)
+    const userMemberships = await prisma.orgMember.findMany({
+      where: { userId },
+      select: { orgId: true },
+    });
+    const myOrgIds = userMemberships.map(m => m.orgId);
+    const counterpartyOrgId = myOrgIds.includes(thread.orgId)
+      ? thread.counterpartyOrgId
+      : thread.orgId;
+
+    const counterpartyStatus = await this.getOrgAccountStatus(counterpartyOrgId);
+
+    return { ...thread, counterpartyStatus };
+  }
+
+  // ============================================
+  // ✅ Helper: Get the "worst" account status across an org's members
+  // BANNED > SUSPENDED > ACTIVE
+  // ============================================
+  private async getOrgAccountStatus(orgId: string): Promise<{
+    status: 'ACTIVE' | 'SUSPENDED' | 'BANNED';
+    message: string | null;
+  }> {
+    const members = await prisma.orgMember.findMany({
+      where: { orgId },
+      include: {
+        user: {
+          select: { status: true, suspendedAt: true, bannedAt: true, statusReason: true },
+        },
+      },
+    });
+
+    if (members.length === 0) {
+      return { status: 'ACTIVE', message: null };
+    }
+
+    // Check if ALL members are banned
+    const allBanned = members.every(m => m.user.status === 'BANNED');
+    if (allBanned) {
+      const reason = members[0]?.user.statusReason;
+      return {
+        status: 'BANNED',
+        message: reason || 'This account has been banned',
+      };
+    }
+
+    // Check if ALL members are suspended or banned (no one active)
+    const allInactive = members.every(m => m.user.status !== 'ACTIVE');
+    if (allInactive) {
+      const suspendedMember = members.find(m => m.user.status === 'SUSPENDED');
+      const reason = suspendedMember?.user.statusReason;
+      return {
+        status: 'SUSPENDED',
+        message: reason || 'This account has been suspended',
+      };
+    }
+
+    return { status: 'ACTIVE', message: null };
   }
 
   // ============================================

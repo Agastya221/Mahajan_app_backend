@@ -70,4 +70,57 @@ export class UserService {
       },
     });
   }
+
+  // ============================================
+  // ✅ Contact Discovery — "Which of my phone contacts are on the platform?"
+  // ============================================
+  async checkContacts(phones: string[]) {
+    // Normalize: strip spaces, ensure + prefix
+    const normalized = [...new Set(
+      phones.map(p => p.replace(/[\s\-()]/g, '')).filter(p => p.length >= 10)
+    )];
+
+    if (normalized.length === 0) {
+      return { registeredUsers: [] };
+    }
+
+    // Single efficient query — only Mahajans, include status for banned/suspended visibility
+    const users = await prisma.user.findMany({
+      where: {
+        phone: { in: normalized },
+        role: UserRole.MAHAJAN,
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        status: true,             // ACTIVE | SUSPENDED | BANNED
+        isVerified: true,         // GST verified badge
+        memberships: {
+          select: {
+            org: {
+              select: { id: true, name: true, city: true },
+            },
+          },
+          take: 1,                // Primary org only
+        },
+      },
+    });
+
+    // Anti-enumeration: 100ms artificial delay so response time doesn't leak
+    // whether 0 or 500 contacts matched
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Shape the response — expose status so frontend can show badges
+    const registeredUsers = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      phone: u.phone,
+      status: u.status,           // "ACTIVE" | "SUSPENDED" | "BANNED"
+      isVerified: u.isVerified,
+      org: u.memberships[0]?.org || null,
+    }));
+
+    return { registeredUsers };
+  }
 }

@@ -356,7 +356,6 @@ async function main() {
     threadNM = await prisma.chatThread.create({
       data: {
         orgId: orgA, counterpartyOrgId: orgB, accountId: acctNM!.id,
-        title: 'Mahajan Fruits ↔ Shaikh Trading',
         type: 'ORG_CHAT',
         lastMessageAt: hrs(0.5),
         lastMessageText: 'Haan bhai, Ramu abhi Igatpuri cross kar raha hai',
@@ -419,7 +418,7 @@ async function main() {
     threadPM = await prisma.chatThread.create({
       data: {
         orgId: orgC, counterpartyOrgId: orgD, accountId: acctPM?.id,
-        title: 'Patil Agro ↔ Shaikh Trading', type: 'ORG_CHAT',
+        type: 'ORG_CHAT',
         lastMessageAt: days(3), lastMessageText: 'Sab settle ho gaya bhai 👍',
       },
     });
