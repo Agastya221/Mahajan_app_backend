@@ -182,6 +182,106 @@ export class TripService {
         });
       }
 
+      // 10. ✅ Create goods payment record if payment info provided during trip creation
+      if (data.goodsPaymentStatus && data.goodsPaymentAmount) {
+        const amountPaise = BigInt(Math.round(data.goodsPaymentAmount * 100));
+
+        // Find or create ledger account between source and destination
+        const [orgA, orgB] = data.sourceOrgId < newTrip.destinationOrgId
+          ? [data.sourceOrgId, newTrip.destinationOrgId]
+          : [newTrip.destinationOrgId, data.sourceOrgId];
+
+        let account = await tx.account.findUnique({
+          where: { ownerOrgId_counterpartyOrgId: { ownerOrgId: orgA, counterpartyOrgId: orgB } },
+        });
+
+        if (!account) {
+          account = await tx.account.create({
+            data: { ownerOrgId: orgA, counterpartyOrgId: orgB, balance: 0n },
+          });
+          // Create mirror account
+          await tx.account.create({
+            data: { ownerOrgId: orgB, counterpartyOrgId: orgA, balance: 0n },
+          });
+        }
+
+        if (data.goodsPaymentStatus === 'PAID') {
+          // Already settled (cash/offline) — create CONFIRMED payment + update ledger
+          const payment = await tx.payment.create({
+            data: {
+              accountId: account.id,
+              tripId: newTrip.id,
+              amount: amountPaise,
+              status: 'CONFIRMED',
+              mode: 'CASH',
+              tag: data.goodsPaymentTag || 'OTHER',
+              confirmedAt: new Date(),
+              confirmedBy: createdBy,
+              paidAt: new Date(),
+              markedPaidAt: new Date(),
+              markedPaidBy: createdBy,
+            },
+          });
+
+          // Update ledger balances
+          const updatedAccount = await tx.account.update({
+            where: { id: account.id },
+            data: { balance: { decrement: amountPaise } },
+            select: { balance: true },
+          });
+
+          await tx.ledgerEntry.create({
+            data: {
+              accountId: account.id,
+              direction: 'RECEIVABLE',
+              amount: amountPaise,
+              balance: updatedAccount.balance,
+              description: `Trip payment (already paid) - ${data.goodsPaymentTag || 'OTHER'}`,
+              referenceType: 'PAYMENT',
+              referenceId: payment.id,
+            },
+          });
+
+          // Mirror account
+          const mirrorAccount = await tx.account.findUnique({
+            where: { ownerOrgId_counterpartyOrgId: { ownerOrgId: orgB, counterpartyOrgId: orgA } },
+          });
+
+          if (mirrorAccount) {
+            const updatedMirror = await tx.account.update({
+              where: { id: mirrorAccount.id },
+              data: { balance: { increment: amountPaise } },
+              select: { balance: true },
+            });
+
+            await tx.ledgerEntry.create({
+              data: {
+                accountId: mirrorAccount.id,
+                direction: 'PAYABLE',
+                amount: amountPaise,
+                balance: updatedMirror.balance,
+                description: `Trip payment sent`,
+                referenceType: 'PAYMENT',
+                referenceId: payment.id,
+              },
+            });
+          }
+
+        } else {
+          // PENDING — create pending payment, receiver can Pay Now via Razorpay later
+          await tx.payment.create({
+            data: {
+              accountId: account.id,
+              tripId: newTrip.id,
+              amount: amountPaise,
+              status: 'PENDING',
+              tag: data.goodsPaymentTag || 'OTHER',
+              remarks: `Payment pending for trip ${newTrip.startPoint} → ${newTrip.endPoint}`,
+            },
+          });
+        }
+      }
+
       return newTrip;
     });
 

@@ -57,6 +57,12 @@ export const config = {
   mapbox: {
     secretToken: process.env.MAPBOX_SECRET_TOKEN || '',  // sk.xxx — backend only, NEVER expose to frontend
   },
+
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+  },
 };
 
 // Validate required environment variables

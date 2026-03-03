@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TripStatus, QuantityUnit } from '@prisma/client';
+import { TripStatus, QuantityUnit, PaymentTag } from '@prisma/client';
 import { addressSchema } from '../utils/validators';
 
 export const createTripSchema = z.object({
@@ -24,6 +24,10 @@ export const createTripSchema = z.object({
   driverPaymentPaidBy: z.enum(['SOURCE', 'DESTINATION', 'SPLIT']).optional(),
   driverPaymentSplitSourceAmount: z.number().positive().optional(),
   driverPaymentSplitDestAmount: z.number().positive().optional(),
+  // ✅ Goods payment status — mark as paid or pending during trip creation
+  goodsPaymentStatus: z.enum(['PAID', 'PENDING']).optional(), // PAID = already settled, PENDING = pay later
+  goodsPaymentAmount: z.number().positive().optional(),       // Amount in rupees (only if marking status)
+  goodsPaymentTag: z.nativeEnum(PaymentTag).optional(),       // ADVANCE, PARTIAL, FINAL, etc.
 }).refine(
   (data) => data.destinationOrgId || data.receiverPhone,
   { message: 'Either destinationOrgId or receiverPhone is required', path: ['destinationOrgId'] }

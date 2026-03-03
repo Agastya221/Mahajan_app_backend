@@ -21,6 +21,7 @@ import exportRoutes from './export/export.routes';
 import driverPaymentRoutes from './driver-payments/driver-payment.routes';
 import userRoutes from './users/user.routes';
 import mapRoutes from './map/map.routes';
+import razorpayRoutes from './razorpay/razorpay.routes';
 import healthRoutes from './health/health.routes';
 import mockLocationRoutes from './dev/mock-location.routes';
 
@@ -108,6 +109,7 @@ export function createApp(): Application {
   app.use('/api/v1', driverPaymentRoutes);
   app.use('/api/v1/users', userRoutes);
   app.use('/api/v1/map', mapRoutes);
+  app.use('/api/v1/razorpay', razorpayRoutes);
 
   // Development-only routes (mock location simulator)
   if (config.nodeEnv === 'development') {

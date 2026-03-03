@@ -706,8 +706,13 @@ model Payment {
   status PaymentStatus @default(PENDING)
 
   // Payment method details
-  mode String? // "UPI", "BANK_TRANSFER", "CASH", "CHEQUE"
+  mode String? // "UPI", "BANK_TRANSFER", "CASH", "CHEQUE", "RAZORPAY"
   tag  PaymentTag? // ADVANCE, PARTIAL, FINAL, DUE, OTHER
+
+  // ✅ Razorpay integration
+  razorpayOrderId   String? @unique // order_xxxxx — created when user clicks "Pay Now"
+  razorpayPaymentId String? @unique // pay_xxxxx   — set after successful payment
+  razorpaySignature String? // signature for verification
 
   // Sender's proof (when marking as paid)
   markedPaidAt   DateTime?
@@ -974,6 +979,10 @@ model DriverPayment {
   status     DriverPaymentStatus @default(PENDING)
   paidAt     DateTime?
   remarks    String?
+
+  // ✅ Razorpay integration
+  razorpayOrderId   String? @unique
+  razorpayPaymentId String? @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
