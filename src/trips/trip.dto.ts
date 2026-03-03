@@ -15,6 +15,11 @@ export const createTripSchema = z.object({
   notes: z.string().optional(),
   sourceAddress: addressSchema.optional(),
   destinationAddress: addressSchema.optional(),
+  // ✅ Coordinates for map route (from geocoder or map pin)
+  sourceLat: z.number().min(-90).max(90).optional(),
+  sourceLng: z.number().min(-180).max(180).optional(),
+  destLat: z.number().min(-90).max(90).optional(),
+  destLng: z.number().min(-180).max(180).optional(),
   driverPaymentAmount: z.number().positive().optional(),
   driverPaymentPaidBy: z.enum(['SOURCE', 'DESTINATION', 'SPLIT']).optional(),
   driverPaymentSplitSourceAmount: z.number().positive().optional(),
@@ -36,6 +41,11 @@ export const updateTripSchema = z.object({
   endPoint: z.string().min(1).optional(),
   sourceAddress: addressSchema.optional(),
   destinationAddress: addressSchema.optional(),
+  // ✅ Coordinates for map route
+  sourceLat: z.number().min(-90).max(90).optional(),
+  sourceLng: z.number().min(-180).max(180).optional(),
+  destLat: z.number().min(-90).max(90).optional(),
+  destLng: z.number().min(-180).max(180).optional(),
   notes: z.string().optional(),
   estimatedDistance: z.number().positive().optional(),
   estimatedArrival: z.string().datetime().nullable().optional(),

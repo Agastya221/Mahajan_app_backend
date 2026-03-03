@@ -1,9 +1,10 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { CreateDriverPaymentDto, RecordDriverPaymentDto } from './driver-payment.dto';
-import { Prisma, DriverPaymentStatus } from '@prisma/client';
+import { DriverPaymentStatus } from '@prisma/client';
 
-const { Decimal } = Prisma;
+// Helper: Convert rupees (number) to paise (BigInt)
+const toPaise = (rupees: number): bigint => BigInt(Math.round(rupees * 100));
 
 export class DriverPaymentService {
   async createOrUpdateDriverPayment(tripId: string, data: CreateDriverPaymentDto, userId: string) {
@@ -33,29 +34,35 @@ export class DriverPaymentService {
       if (!data.splitSourceAmount || !data.splitDestAmount) {
         throw new ValidationError('Split amounts are required when paidBy is SPLIT');
       }
-      const splitTotal = new Decimal(data.splitSourceAmount).add(new Decimal(data.splitDestAmount));
-      if (!splitTotal.equals(new Decimal(data.totalAmount))) {
+      const splitTotal = data.splitSourceAmount + data.splitDestAmount;
+      // Allow tiny float rounding (e.g. 100.10 + 85.40 vs 185.50)
+      if (Math.abs(splitTotal - data.totalAmount) > 0.01) {
         throw new ValidationError('Split amounts must add up to the total amount');
       }
     }
+
+    // Convert to paise (BigInt) for storage
+    const totalAmountPaise = toPaise(data.totalAmount);
+    const splitSourcePaise = data.splitSourceAmount ? toPaise(data.splitSourceAmount) : null;
+    const splitDestPaise = data.splitDestAmount ? toPaise(data.splitDestAmount) : null;
 
     // Upsert driver payment
     const driverPayment = await prisma.driverPayment.upsert({
       where: { tripId },
       create: {
         tripId,
-        totalAmount: data.totalAmount,
+        totalAmount: totalAmountPaise,
         paidBy: data.paidBy,
-        splitSourceAmount: data.splitSourceAmount,
-        splitDestAmount: data.splitDestAmount,
+        splitSourceAmount: splitSourcePaise,
+        splitDestAmount: splitDestPaise,
         remarks: data.remarks,
         status: 'PENDING',
       },
       update: {
-        totalAmount: data.totalAmount,
+        totalAmount: totalAmountPaise,
         paidBy: data.paidBy,
-        splitSourceAmount: data.splitSourceAmount,
-        splitDestAmount: data.splitDestAmount,
+        splitSourceAmount: splitSourcePaise,
+        splitDestAmount: splitDestPaise,
         remarks: data.remarks,
       },
     });
@@ -91,13 +98,13 @@ export class DriverPaymentService {
       throw new NotFoundError('No driver payment configured for this trip');
     }
 
-    const newPaidAmount = new Decimal(existing.paidAmount.toString()).add(new Decimal(data.amount));
-    const totalAmount = new Decimal(existing.totalAmount.toString());
+    const newPaidAmount = existing.paidAmount + toPaise(data.amount);
+    const totalAmount = existing.totalAmount;
 
     let status: DriverPaymentStatus;
-    if (newPaidAmount.gte(totalAmount)) {
+    if (newPaidAmount >= totalAmount) {
       status = DriverPaymentStatus.PAID;
-    } else if (newPaidAmount.gt(0)) {
+    } else if (newPaidAmount > 0n) {
       status = DriverPaymentStatus.PARTIALLY_PAID;
     } else {
       status = DriverPaymentStatus.PENDING;
@@ -106,7 +113,7 @@ export class DriverPaymentService {
     const updated = await prisma.driverPayment.update({
       where: { tripId },
       data: {
-        paidAmount: newPaidAmount.toNumber(),
+        paidAmount: newPaidAmount,
         status,
         paidAt: status === 'PAID' ? new Date() : null,
         remarks: data.remarks || existing.remarks,

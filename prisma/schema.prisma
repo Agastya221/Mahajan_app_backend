@@ -147,7 +147,7 @@ model Org {
   id       String          @id @default(cuid())
   name     String
   city     String?
-  phone    String?
+  phone    String?         @unique // ✅ Unique — WhatsApp-style contact search
   address  Json?
   gstin    String?         @unique
   roleType MahajanRoleType @default(BOTH)
@@ -219,12 +219,15 @@ model MahajanInvite {
   invitedPhone   String
   inviteToken    String  @unique
   inviteeOrgId   String?
-  status         String  @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  status         String  @default("PENDING") // PENDING, ACCEPTED, REJECTED, EXPIRED
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime // ✅ Invite expiry — default set by service (e.g. 7 days)
 
   @@unique([invitedByOrgId, invitedPhone])
   @@index([invitedPhone])
+  @@index([expiresAt]) // For cleanup job queries
 }
 
 model RefreshToken {
@@ -367,6 +370,16 @@ model Trip {
   // ✅ Structured addresses (mandi-style, like Flipkart)
   sourceAddress      Json? // { label, line1, line2, city, state, pincode, landmark, contactName, contactPhone }
   destinationAddress Json? // same structure
+
+  // ✅ Coordinates for route polyline (from org address geocoder or map pin)
+  sourceLat Float?
+  sourceLng Float?
+  destLat   Float?
+  destLng   Float?
+
+  // ✅ Cached route metadata (populated on first Mapbox route fetch)
+  routeDistance Float? // meters
+  routeDuration Float? // seconds
 
   // ✅ Soft cancel fields
   cancelledAt  DateTime?
@@ -943,20 +956,21 @@ model ExportLog {
 // Flexible driver payment: source pays, dest pays, or split
 // ============================================
 
+// ✅ STANDARDIZED: All money fields use BigInt (paise) — matches Payment, LedgerEntry, Account
 model DriverPayment {
   id     String @id @default(cuid())
   tripId String @unique
   trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
-  totalAmount Decimal             @db.Decimal(12, 2)
+  totalAmount BigInt // in paise (₹185.50 = 18550)
   paidBy      DriverPaymentPaidBy @default(SOURCE)
 
   // Split amounts (only when paidBy = SPLIT)
-  splitSourceAmount Decimal? @db.Decimal(12, 2)
-  splitDestAmount   Decimal? @db.Decimal(12, 2)
+  splitSourceAmount BigInt? // in paise
+  splitDestAmount   BigInt? // in paise
 
   // Payment tracking
-  paidAmount Decimal             @default(0) @db.Decimal(12, 2)
+  paidAmount BigInt              @default(0) // in paise
   status     DriverPaymentStatus @default(PENDING)
   paidAt     DateTime?
   remarks    String?

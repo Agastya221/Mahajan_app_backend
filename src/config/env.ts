@@ -53,6 +53,10 @@ export const config = {
   fileUpload: {
     maxSize: parseInt(process.env.MAX_FILE_SIZE || '10485760'), // 10MB
   },
+
+  mapbox: {
+    secretToken: process.env.MAPBOX_SECRET_TOKEN || '',  // sk.xxx — backend only, NEVER expose to frontend
+  },
 };
 
 // Validate required environment variables

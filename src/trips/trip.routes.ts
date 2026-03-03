@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { TripController } from './trip.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { TrackingController } from '../tracking/tracking.controller';
+import { MapController } from '../map/map.controller';
 
 const router = Router();
 const tripController = new TripController();
 const trackingController = new TrackingController();
+const mapController = new MapController();
 
 // ════════════════════════════════════════════
 // TRIPS
@@ -57,6 +59,13 @@ router.get('/:tripId/locations', authenticate, trackingController.getLocationHis
  * @access  Private
  */
 router.get('/:tripId/latest', authenticate, trackingController.getLatestLocation);
+
+/**
+ * @route   GET /api/v1/trips/:tripId/route
+ * @desc    Get driving route polyline (Mapbox Directions — cached 24h)
+ * @access  Private (source org, dest org, or driver)
+ */
+router.get('/:tripId/route', authenticate, mapController.getTripRoute);
 
 /**
  * @route   POST /api/v1/trips/:tripId/load-cards

@@ -264,13 +264,15 @@ export class ChatService {
       },
       update: {
         inviteToken: token, // Refresh token just in case
-        status: 'PENDING'
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Refresh expiry
       },
       create: {
         invitedByOrgId: myOrgId,
         invitedPhone: normalizedPhone,
         inviteToken: token,
-        inviteeOrgId: placeholderOrg.id
+        inviteeOrgId: placeholderOrg.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
       }
     });
 

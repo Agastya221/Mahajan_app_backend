@@ -92,7 +92,7 @@ export class TripService {
     let isDriverRegistered = false;
 
     if (driverUser) {
-      if (driverUser.role !== UserRole.DRIVER || !driverUser.driverProfile) {            
+      if (driverUser.role !== UserRole.DRIVER || !driverUser.driverProfile) {
         throw new ValidationError('The phone number does not belong to a registered driver');
       }
       driverProfileId = driverUser.driverProfile.id;
@@ -127,6 +127,11 @@ export class TripService {
           notes: data.notes,
           sourceAddress: data.sourceAddress || Prisma.JsonNull,
           destinationAddress: data.destinationAddress || Prisma.JsonNull,
+          // Coordinates for map route
+          sourceLat: data.sourceLat ?? null,
+          sourceLng: data.sourceLng ?? null,
+          destLat: data.destLat ?? null,
+          destLng: data.destLng ?? null,
         },
         include: {
           sourceOrg: {
@@ -164,13 +169,14 @@ export class TripService {
 
       // 9. Create DriverPayment record if payment info provided AND driver is registered
       if (data.driverPaymentAmount) {
+        const toPaise = (v: number) => BigInt(Math.round(v * 100));
         await tx.driverPayment.create({
           data: {
             tripId: newTrip.id,
-            totalAmount: data.driverPaymentAmount,
+            totalAmount: toPaise(data.driverPaymentAmount),
             paidBy: data.driverPaymentPaidBy || 'SOURCE',
-            splitSourceAmount: data.driverPaymentSplitSourceAmount,
-            splitDestAmount: data.driverPaymentSplitDestAmount,
+            splitSourceAmount: data.driverPaymentSplitSourceAmount ? toPaise(data.driverPaymentSplitSourceAmount) : null,
+            splitDestAmount: data.driverPaymentSplitDestAmount ? toPaise(data.driverPaymentSplitDestAmount) : null,
             status: 'PENDING',
           },
         });
@@ -894,10 +900,10 @@ export class TripService {
     // Points/addresses can only be edited before IN_TRANSIT
     const preTransitStatuses: TripStatus[] = [TripStatus.CREATED, TripStatus.ASSIGNED, TripStatus.LOADED];
     if (
-      (data.startPoint || data.endPoint || data.sourceAddress || data.destinationAddress) &&
+      (data.startPoint || data.endPoint || data.sourceAddress || data.destinationAddress || data.sourceLat || data.destLat) &&
       !preTransitStatuses.includes(trip.status)
     ) {
-      throw new ValidationError('Start/end points and addresses can only be edited before the trip is in transit');
+      throw new ValidationError('Start/end points, addresses, and coordinates can only be edited before the trip is in transit');
     }
 
     // Build update data
@@ -911,6 +917,11 @@ export class TripService {
     if (data.estimatedArrival !== undefined) {
       updateData.estimatedArrival = data.estimatedArrival ? new Date(data.estimatedArrival) : null;
     }
+    // Coordinates
+    if (data.sourceLat !== undefined) updateData.sourceLat = data.sourceLat;
+    if (data.sourceLng !== undefined) updateData.sourceLng = data.sourceLng;
+    if (data.destLat !== undefined) updateData.destLat = data.destLat;
+    if (data.destLng !== undefined) updateData.destLng = data.destLng;
 
     const updated = await prisma.$transaction(async (tx) => {
       const updatedTrip = await tx.trip.update({
