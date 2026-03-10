@@ -20,6 +20,9 @@ import './notifications/notification.worker';
 // Import file cleanup worker
 import { scheduleFileCleanup } from './files/file.cleanup';
 
+// Import invoice reminder scheduler
+import { scheduleInvoiceReminders } from './invoices/invoice.reminder';
+
 // Import Firebase init (optional — push notifications)
 import { getFirebaseApp } from './config/firebase';
 
@@ -112,6 +115,7 @@ async function startServer() {
     // Schedule file cleanup job (runs hourly to clean stale uploads)
     if (redisConnected) {
       await scheduleFileCleanup();
+      await scheduleInvoiceReminders();
     }
 
     // Start server
