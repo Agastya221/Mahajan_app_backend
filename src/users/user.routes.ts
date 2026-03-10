@@ -4,36 +4,62 @@ import { UserController } from './user.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
-const userController = new UserController();
+const c = new UserController();
 
-// ── Dedicated rate limiter for contact discovery: 10 requests per minute
+// ── Rate limiter for contact discovery: 10 requests per minute ──
 const contactCheckLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
+    windowMs: 60 * 1000,
     max: 10,
     message: 'Too many contact check requests, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
 });
 
-/**
- * @route   POST /api/v1/users/check-contacts
- * @desc    Check which phone contacts are registered Mahajans
- * @access  Private (rate limited: 10/min)
- */
-router.post('/check-contacts', authenticate, contactCheckLimiter, userController.checkContacts);
+// ============================================
+// USER ROUTES (/api/v1/users)
+// ============================================
 
-/**
- * @route   POST /api/v1/users/me/gstin
- * @desc    Submit GST number for verification
- * @access  Private (MAHAJAN only)
- */
-router.post('/me/gstin', authenticate, userController.submitGstin);
+// POST /api/v1/users/check-contacts
+router.post('/check-contacts', authenticate, contactCheckLimiter, c.checkContacts);
 
-/**
- * @route   GET /api/v1/users/me/gstin
- * @desc    Get GST verification status
- * @access  Private
- */
-router.get('/me/gstin', authenticate, userController.getGstinStatus);
+// POST /api/v1/users/me/gstin
+router.post('/me/gstin', authenticate, c.submitGstin);
+
+// GET /api/v1/users/me/gstin
+router.get('/me/gstin', authenticate, c.getGstinStatus);
+
+// POST /api/v1/users/:userId/report
+router.post('/:userId/report', authenticate, c.reportUser);
+
+// ============================================
+// PROFILE ROUTES (/api/v1/profile)
+// These are mounted separately in app.ts at /api/v1/profile
+// ============================================
+
+export const profileRouter = Router();
+
+// GET /api/v1/profile
+profileRouter.get('/', authenticate, c.getProfile);
+
+// PATCH /api/v1/profile/name
+profileRouter.patch('/name', authenticate, c.updateName);
+
+// PATCH /api/v1/profile/bio
+profileRouter.patch('/bio', authenticate, c.updateBio);
+
+// POST /api/v1/profile/photo/upload-url
+profileRouter.post('/photo/upload-url', authenticate, c.getPhotoUploadUrl);
+
+// POST /api/v1/profile/photo/confirm
+profileRouter.post('/photo/confirm', authenticate, c.confirmPhotoUpload);
+
+// DELETE /api/v1/profile/photo
+profileRouter.delete('/photo', authenticate, c.removePhoto);
+
+// POST /api/v1/profile/phone/request-change
+profileRouter.post('/phone/request-change', authenticate, c.requestPhoneChange);
+
+// POST /api/v1/profile/phone/confirm-change
+profileRouter.post('/phone/confirm-change', authenticate, c.confirmPhoneChange);
 
 export default router;

@@ -19,10 +19,9 @@ import chatRoutes from './chat/chat.routes';
 import itemRoutes from './items/item.routes';
 import exportRoutes from './export/export.routes';
 import driverPaymentRoutes from './driver-payments/driver-payment.routes';
-import userRoutes from './users/user.routes';
+import userRoutes, { profileRouter as userProfileRoutes } from './users/user.routes';
 import mapRoutes from './map/map.routes';
 import razorpayRoutes from './razorpay/razorpay.routes';
-import userProfileRoutes from './users/user.profile.routes';
 import healthRoutes from './health/health.routes';
 import mockLocationRoutes from './dev/mock-location.routes';
 

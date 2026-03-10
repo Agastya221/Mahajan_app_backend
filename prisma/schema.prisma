@@ -231,6 +231,10 @@ model User {
   // ✅ Khata payment relations
   khataPayments KhataPayment[]
 
+  // ✅ User report relations
+  reportsMade     UserReport[] @relation("ReportsMade")
+  reportsReceived UserReport[] @relation("ReportsReceived")
+
   @@index([status])
 }
 
@@ -1106,4 +1110,26 @@ model DriverPayment {
 
   @@index([status])
   @@index([tripId])
+}
+
+// ============================================
+// USER REPORT MODEL
+// ============================================
+
+model UserReport {
+  id               String  @id @default(cuid())
+  reportedByUserId String
+  reportedByUser   User    @relation("ReportsMade", fields: [reportedByUserId], references: [id], onDelete: Cascade)
+  reportedUserId   String
+  reportedUser     User    @relation("ReportsReceived", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  reason           String // SPAM, FRAUD, HARASSMENT, FAKE_ACCOUNT, OTHER
+  details          String? // Optional free text (max 500 chars)
+  status           String  @default("PENDING") // PENDING, REVIEWED, DISMISSED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([reportedByUserId, reportedUserId])
+  @@index([reportedUserId, status])
+  @@index([status, createdAt])
 }
