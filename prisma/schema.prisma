@@ -115,6 +115,7 @@ enum AttachmentType {
   CHAT_IMAGE
   CHAT_DOCUMENT
   CHAT_AUDIO
+  PROFILE_PHOTO
   OTHER
 }
 
@@ -137,6 +138,15 @@ enum ChatMessageType {
 enum LedgerDirection {
   PAYABLE
   RECEIVABLE
+}
+
+enum LedgerTransactionType {
+  TRIP // Auto-created from receive card
+  INVOICE // Manually created invoice
+  PAYMENT // Payment recorded (cash or Razorpay)
+  ADVANCE // Advance payment
+  ADVANCE_APPLIED // Advance auto-applied to invoice
+  ADJUSTMENT // Manual correction entry
 }
 
 // ============================================
@@ -173,6 +183,9 @@ model Org {
 
   // ✅ NEW: Invitations sent by this org
   sentInvites MahajanInvite[]
+
+  // ✅ Khata contacts (non-registered traders)
+  khataContacts KhataContact[]
 }
 
 model User {
@@ -187,6 +200,15 @@ model User {
   suspendedAt  DateTime?
   bannedAt     DateTime?
   statusReason String?
+
+  // ✅ Profile fields
+  photoUrl   String? // S3 URL of profile photo
+  photoS3Key String? // S3 key for deletion when photo is replaced
+  bio        String? @db.VarChar(200) // Short about text
+
+  // ✅ FCM Push Notifications
+  fcmToken     String? // FCM device token — updated on each app open
+  fcmUpdatedAt DateTime? // When token was last refreshed
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -205,6 +227,9 @@ model User {
   markedPaidPayments Payment[] @relation("MarkedPaidPayments")
   confirmedPayments  Payment[] @relation("ConfirmedPayments")
   disputedPayments   Payment[] @relation("DisputedPayments")
+
+  // ✅ Khata payment relations
+  khataPayments KhataPayment[]
 
   @@index([status])
 }
@@ -630,6 +655,7 @@ model Account {
   counterpartyOrgId String
   counterpartyOrg   Org    @relation("AccountCounterpartyOrg", fields: [counterpartyOrgId], references: [id], onDelete: Restrict)
   balance           BigInt @default(0)
+  advanceBalance    BigInt @default(0) // money paid before any invoice existed
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -645,20 +671,21 @@ model Account {
 }
 
 model LedgerEntry {
-  id            String          @id @default(cuid())
-  accountId     String
-  account       Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  tripId        String?
-  trip          Trip?           @relation(fields: [tripId], references: [id], onDelete: SetNull)
-  direction     LedgerDirection
-  amount        BigInt
-  balance       BigInt
-  description   String?
-  note          String?
-  tag           PaymentTag?
-  referenceType String?
-  referenceId   String?
-  createdAt     DateTime        @default(now())
+  id              String                 @id @default(cuid())
+  accountId       String
+  account         Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tripId          String?
+  trip            Trip?                  @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  direction       LedgerDirection
+  amount          BigInt
+  balance         BigInt
+  description     String?
+  note            String?
+  tag             PaymentTag?
+  referenceType   String?
+  referenceId     String?
+  transactionType LedgerTransactionType? // null for old entries (backward compat)
+  createdAt       DateTime               @default(now())
 
   chatMessages ChatMessage[]
 
@@ -674,6 +701,8 @@ model Invoice {
   trip          Trip?     @relation(fields: [tripId], references: [id], onDelete: SetNull)
   invoiceNumber String
   total         BigInt
+  paidAmount    BigInt    @default(0) // running total of confirmed payments
+  dueAmount     BigInt    @default(0) // computed: total - paidAmount (kept in sync)
   dueDate       DateTime?
   status        String    @default("OPEN")
   description   String?
@@ -684,10 +713,30 @@ model Invoice {
   payments     Payment[]
   attachments  Attachment[]
   chatMessages ChatMessage[]
+  items        InvoiceItem[]
 
   @@unique([accountId, invoiceNumber])
   @@index([accountId, status])
   @@index([dueDate])
+}
+
+model InvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  itemName      String
+  itemNameHindi String?
+  quantity      Decimal  @db.Decimal(10, 3)
+  unit          String
+  rate          Decimal? @db.Decimal(10, 2)
+  amount        BigInt?
+  notes         String?
+  sortOrder     Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
 }
 
 model Payment {
@@ -750,6 +799,68 @@ model Payment {
   @@index([status, createdAt])
 }
 
+// ============================================
+// KHATA CONTACT MODELS (Non-registered traders)
+// ============================================
+
+model KhataContact {
+  id    String @id @default(cuid())
+  orgId String
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  name    String
+  phone   String?
+  city    String?
+  notes   String?
+  balance BigInt  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries  KhataEntry[]
+  payments KhataPayment[]
+
+  @@index([orgId])
+  @@index([orgId, phone])
+}
+
+model KhataEntry {
+  id             String       @id @default(cuid())
+  khataContactId String
+  khataContact   KhataContact @relation(fields: [khataContactId], references: [id], onDelete: Cascade)
+
+  direction       LedgerDirection
+  amount          BigInt
+  balance         BigInt
+  description     String?
+  referenceType   String?
+  referenceId     String?
+  transactionType String?
+
+  createdAt DateTime @default(now())
+
+  @@index([khataContactId, createdAt])
+}
+
+model KhataPayment {
+  id             String       @id @default(cuid())
+  khataContactId String
+  khataContact   KhataContact @relation(fields: [khataContactId], references: [id], onDelete: Cascade)
+
+  amount  BigInt
+  mode    String?
+  tag     PaymentTag?
+  remarks String?
+  paidAt  DateTime    @default(now())
+
+  recordedBy   String
+  recordedUser User   @relation(fields: [recordedBy], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([khataContactId, createdAt])
+}
+
 model Dispute {
   id     String  @id @default(cuid())
   tripId String
@@ -790,6 +901,10 @@ model ChatThread {
   isArchived      Boolean   @default(false)
   isPinned        Boolean   @default(false)
   pinnedAt        DateTime?
+
+  // ✅ Block feature
+  blockedByOrgId String? // which org initiated the block
+  blockedAt      DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -864,6 +979,7 @@ model ChatMessage {
   @@index([threadId, isRead, senderUserId])
   @@index([threadId, senderUserId, isRead])
   @@index([threadId, isDeletedForEveryone])
+  @@index([threadId, messageType, isDeletedForEveryone, createdAt]) // Media query index
 }
 
 // ✅ Per-user message deletion tracking ("Delete for me")
@@ -914,6 +1030,7 @@ model Attachment {
   @@index([invoiceId])
   @@index([paymentId])
   @@index([messageId])
+  @@index([messageId, type]) // Media gallery index
 }
 
 // ============================================

@@ -30,3 +30,10 @@ export const refreshTokenSchema = z.object({
 export type VerifyWidgetTokenDto = z.infer<typeof verifyWidgetTokenSchema>;
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type RefreshTokenDto = z.infer<typeof refreshTokenSchema>;
+
+/**
+ * Register FCM device token for push notifications
+ */
+export const registerFcmTokenSchema = z.object({
+  fcmToken: z.string().min(10, 'Invalid FCM token'),
+});

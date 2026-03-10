@@ -32,6 +32,8 @@ export class AuthService {
         name: true,
         role: true,
         status: true,
+        photoUrl: true,
+        bio: true,
         createdAt: true,
       },
     });
@@ -108,6 +110,8 @@ export class AuthService {
         phone: true,
         name: true,
         role: true,
+        photoUrl: true,
+        bio: true,
         createdAt: true,
       },
     });
@@ -373,5 +377,15 @@ export class AuthService {
   static async isTokenBlacklisted(token: string): Promise<boolean> {
     const result = await redisClient.get(`bl:${token}`);
     return result !== null;
+  }
+
+  // ─── FCM Token Registration ─────────────────────────────
+
+  async registerFcmToken(userId: string, fcmToken: string) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken, fcmUpdatedAt: new Date() },
+    });
+    return { success: true };
   }
 }

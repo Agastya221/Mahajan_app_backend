@@ -380,4 +380,85 @@ export class ChatController {
       data: result,
     });
   });
+
+  // ════════════════════════════════════════════
+  // MEDIA — Preview + Gallery
+  // ════════════════════════════════════════════
+
+  /**
+   * GET /chat/threads/:threadId/media-preview
+   * Get media counts + thumbnail previews for Chat Info screen.
+   */
+  getMediaPreview = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const result = await chatService.getMediaPreview(threadId, req.user!.id);
+    res.json({ success: true, data: result });
+  });
+
+  /**
+   * GET /chat/threads/:threadId/media
+   * Get paginated media gallery (images, docs, or all).
+   * Query: ?type=images|docs|all&limit=30&cursor=xxx
+   */
+  getMediaGallery = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const type = (req.query.type as string) || 'all';
+    const limit = Math.min(parseInt(req.query.limit as string) || 30, 100);
+    const cursor = req.query.cursor as string | undefined;
+
+    if (!['images', 'docs', 'all'].includes(type)) {
+      return res.status(400).json({ success: false, message: 'type must be images, docs, or all' });
+    }
+
+    const result = await chatService.getMediaGallery(threadId, req.user!.id, type as any, limit, cursor);
+    res.json({ success: true, data: result });
+  });
+
+  // ════════════════════════════════════════════
+  // BLOCK / UNBLOCK
+  // ════════════════════════════════════════════
+
+  /**
+   * POST /chat/threads/:threadId/block
+   * Block the other party in a thread.
+   */
+  blockThread = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const result = await chatService.blockThread(threadId, req.user!.id);
+    res.json({ success: true, data: result, message: 'Contact blocked' });
+  });
+
+  /**
+   * POST /chat/threads/:threadId/unblock
+   * Unblock a previously blocked thread.
+   */
+  unblockThread = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const result = await chatService.unblockThread(threadId, req.user!.id);
+    res.json({ success: true, data: result, message: 'Contact unblocked' });
+  });
+
+  // ════════════════════════════════════════════
+  // CLEAR CHAT / DELETE THREAD
+  // ════════════════════════════════════════════
+
+  /**
+   * POST /chat/threads/:threadId/clear
+   * Soft-delete all messages in a thread.
+   */
+  clearChat = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const result = await chatService.clearChat(threadId, req.user!.id);
+    res.json({ success: true, data: result, message: `Cleared ${result.clearedCount} messages` });
+  });
+
+  /**
+   * DELETE /chat/threads/:threadId
+   * Hard-delete the thread and all messages.
+   */
+  deleteThread = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { threadId } = req.params;
+    const result = await chatService.deleteThread(threadId, req.user!.id);
+    res.json({ success: true, data: result, message: 'Chat thread deleted' });
+  });
 }

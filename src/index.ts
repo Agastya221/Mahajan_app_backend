@@ -20,6 +20,9 @@ import './notifications/notification.worker';
 // Import file cleanup worker
 import { scheduleFileCleanup } from './files/file.cleanup';
 
+// Import Firebase init (optional — push notifications)
+import { getFirebaseApp } from './config/firebase';
+
 // TODO: Enable storage config logger when adding CDN/R2 support
 // import { logStorageConfig } from './config/storage';
 
@@ -86,6 +89,9 @@ async function startServer() {
         logger.warn('⚠️ This is acceptable for development, but MUST be fixed for production.');
       }
     }
+
+    // Initialize Firebase (optional — push notifications)
+    getFirebaseApp(); // logs warning if not configured, no crash
 
     // Create Express app
     const app = createApp();

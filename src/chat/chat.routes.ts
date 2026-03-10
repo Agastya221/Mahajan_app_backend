@@ -46,6 +46,60 @@ router.get('/threads/:threadId', authenticate, chatController.getThreadById);
 router.patch('/threads/:threadId', authenticate, chatController.updateThread);
 
 // ════════════════════════════════════════════
+// MEDIA PREVIEW + GALLERY
+// ════════════════════════════════════════════
+
+/**
+ * @route   GET /api/v1/chat/threads/:threadId/media-preview
+ * @desc    Get media counts + thumbnail previews for Chat Info screen
+ * @access  Private
+ */
+router.get('/threads/:threadId/media-preview', authenticate, chatController.getMediaPreview);
+
+/**
+ * @route   GET /api/v1/chat/threads/:threadId/media
+ * @desc    Get paginated media gallery (?type=images|docs|all&limit=30&cursor=xxx)
+ * @access  Private
+ */
+router.get('/threads/:threadId/media', authenticate, chatController.getMediaGallery);
+
+// ════════════════════════════════════════════
+// BLOCK / UNBLOCK
+// ════════════════════════════════════════════
+
+/**
+ * @route   POST /api/v1/chat/threads/:threadId/block
+ * @desc    Block the other party in a thread
+ * @access  Private
+ */
+router.post('/threads/:threadId/block', authenticate, chatController.blockThread);
+
+/**
+ * @route   POST /api/v1/chat/threads/:threadId/unblock
+ * @desc    Unblock a previously blocked thread
+ * @access  Private
+ */
+router.post('/threads/:threadId/unblock', authenticate, chatController.unblockThread);
+
+// ════════════════════════════════════════════
+// CLEAR CHAT / DELETE THREAD
+// ════════════════════════════════════════════
+
+/**
+ * @route   POST /api/v1/chat/threads/:threadId/clear
+ * @desc    Soft-delete all messages in a thread
+ * @access  Private
+ */
+router.post('/threads/:threadId/clear', authenticate, chatController.clearChat);
+
+/**
+ * @route   DELETE /api/v1/chat/threads/:threadId
+ * @desc    Hard-delete the thread and all messages
+ * @access  Private
+ */
+router.delete('/threads/:threadId', authenticate, chatController.deleteThread);
+
+// ════════════════════════════════════════════
 // MESSAGES
 // ════════════════════════════════════════════
 

@@ -42,4 +42,11 @@ router.post('/refresh', authController.refreshToken);
  */
 router.post('/logout', authenticate, authController.logout);
 
+/**
+ * @route   POST /api/v1/auth/fcm-token
+ * @desc    Register FCM device token for push notifications
+ * @access  Private
+ */
+router.post('/fcm-token', authenticate, authController.registerFcmToken);
+
 export default router;

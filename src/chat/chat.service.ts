@@ -1,9 +1,11 @@
 import prisma from '../config/database';
-import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../utils/errors';
 import { CreateThreadDto, SendMessageDto, EditMessageDto, DeleteMessageDto } from './chat.dto';
 import { redisPublisher } from '../config/redis';
 import { Prisma } from '@prisma/client';
 import { logger } from '../utils/logger';
+import { notificationService } from '../notifications/notification.service';
+import { NotificationType } from '../notifications/notification.types';
 
 // ✅ Max time (in minutes) allowed for editing/deleting-for-everyone
 const EDIT_WINDOW_MINUTES = 15;
@@ -420,7 +422,14 @@ export class ChatService {
 
     const counterpartyStatus = await this.getOrgAccountStatus(counterpartyOrgId);
 
-    return { ...thread, counterpartyStatus };
+    // ✅ FEATURE 3: Compute block status
+    let blockStatus: 'BLOCKED_BY_YOU' | 'BLOCKED_BY_OTHER' | null = null;
+    if (thread.blockedByOrgId) {
+      const userOrgId = myOrgIds.includes(thread.orgId) ? thread.orgId : thread.counterpartyOrgId;
+      blockStatus = thread.blockedByOrgId === userOrgId ? 'BLOCKED_BY_YOU' : 'BLOCKED_BY_OTHER';
+    }
+
+    return { ...thread, counterpartyStatus, blockStatus };
   }
 
   // ============================================
@@ -572,6 +581,11 @@ export class ChatService {
   // ============================================
   async sendMessage(threadId: string, data: SendMessageDto & { metadata?: any; tripId?: string }, userId: string) {
     const thread = await this.getThreadById(threadId, userId);
+
+    // ✅ FEATURE 3: Block check — nobody can send in a blocked conversation
+    if (thread.blockedByOrgId) {
+      throw new ForbiddenError('Cannot send messages in a blocked conversation');
+    }
 
     // Idempotency check
     if (data.clientMessageId) {
@@ -740,6 +754,37 @@ export class ChatService {
       }
     } catch (error) {
       console.error('Failed to broadcast message:', error);
+    }
+
+    // ✅ Push notification: Notify the other org when a chat message is sent
+    const notifiableTypes = ['TEXT', 'IMAGE', 'PDF', 'FILE', 'AUDIO', 'PAYMENT_REQUEST', 'INVOICE_CARD'];
+    if (notifiableTypes.includes(data.messageType || 'TEXT')) {
+      const senderMembership = await prisma.orgMember.findFirst({
+        where: { userId, orgId: { in: [thread.orgId, thread.counterpartyOrgId] } },
+        select: { orgId: true },
+      });
+      if (senderMembership) {
+        const recipientOrgId = senderMembership.orgId === thread.orgId
+          ? thread.counterpartyOrgId
+          : thread.orgId;
+
+        const senderName = fullMessage?.senderUser?.name || 'Someone';
+        let notifBody = data.content?.substring(0, 100) || '';
+        if (data.messageType === 'IMAGE') notifBody = '📷 Photo';
+        else if (data.messageType === 'PDF') notifBody = '📄 Document';
+        else if (data.messageType === 'FILE') notifBody = '📎 File';
+        else if (data.messageType === 'AUDIO') notifBody = '🎤 Voice message';
+        else if (data.messageType === 'PAYMENT_REQUEST') notifBody = '💰 Payment request';
+        else if (data.messageType === 'INVOICE_CARD') notifBody = '🧾 Invoice';
+
+        notificationService.enqueueNotification({
+          type: NotificationType.CHAT_MESSAGE,
+          recipientOrgId,
+          title: senderName,
+          body: notifBody,
+          data: { threadId, messageId: fullMessage?.id || '', messageType: data.messageType || 'TEXT' },
+        }).catch(err => logger.error('Failed to queue chat message notification', err));
+      }
     }
 
     return fullMessage;
@@ -1464,5 +1509,281 @@ export class ChatService {
       undefined,
       invoice.id
     );
+  }
+
+  // ============================================
+  // ✅ FEATURE 1: Media Preview (Chat Info screen)
+  // ============================================
+  async getMediaPreview(threadId: string, userId: string) {
+    await this.getThreadById(threadId, userId);
+
+    // Run 3 parallel count queries
+    const [imageCount, docsCount, linksCount, previewMessages] = await Promise.all([
+      prisma.chatMessage.count({
+        where: { threadId, messageType: 'IMAGE', isDeletedForEveryone: false },
+      }),
+      prisma.chatMessage.count({
+        where: { threadId, messageType: { in: ['PDF', 'FILE'] }, isDeletedForEveryone: false },
+      }),
+      prisma.chatMessage.count({
+        where: {
+          threadId,
+          messageType: 'TEXT',
+          isDeletedForEveryone: false,
+          content: { contains: 'http' },
+        },
+      }),
+      prisma.chatMessage.findMany({
+        where: { threadId, messageType: 'IMAGE', isDeletedForEveryone: false },
+        include: {
+          attachments: {
+            select: { id: true, url: true, mimeType: true, fileName: true },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 6,
+      }),
+    ]);
+
+    // Build preview array from messages that have attachments
+    const preview = previewMessages
+      .filter((m) => m.attachments.length > 0)
+      .map((m) => ({
+        messageId: m.id,
+        url: m.attachments[0].url,
+        mimeType: m.attachments[0].mimeType,
+        createdAt: m.createdAt,
+      }));
+
+    return {
+      imageCount,
+      docsCount,
+      linksCount,
+      totalCount: imageCount + docsCount,
+      preview,
+    };
+  }
+
+  // ============================================
+  // ✅ FEATURE 2: Media Gallery (paginated, cursor-based)
+  // ============================================
+  async getMediaGallery(
+    threadId: string,
+    userId: string,
+    type: 'images' | 'docs' | 'all',
+    limit: number,
+    cursor?: string
+  ) {
+    await this.getThreadById(threadId, userId);
+
+    // Build messageType filter
+    let messageTypes: string[];
+    switch (type) {
+      case 'images': messageTypes = ['IMAGE']; break;
+      case 'docs': messageTypes = ['PDF', 'FILE']; break;
+      case 'all': messageTypes = ['IMAGE', 'PDF', 'FILE']; break;
+    }
+
+    // Build where clause with cursor-based pagination
+    const where: any = {
+      threadId,
+      messageType: { in: messageTypes },
+      isDeletedForEveryone: false,
+    };
+
+    if (cursor) {
+      const cursorMessage = await prisma.chatMessage.findUnique({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      if (cursorMessage) {
+        where.createdAt = { lt: cursorMessage.createdAt };
+      }
+    }
+
+    // Fetch one extra to determine if there are more items
+    const messages = await prisma.chatMessage.findMany({
+      where,
+      include: {
+        attachments: {
+          select: { id: true, url: true, mimeType: true, fileName: true, sizeBytes: true, type: true },
+        },
+        senderUser: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = messages.length > limit;
+    const sliced = hasMore ? messages.slice(0, limit) : messages;
+    const nextCursor = hasMore ? sliced[sliced.length - 1].id : null;
+
+    const items = sliced.map((m) => ({
+      messageId: m.id,
+      url: m.attachments[0]?.url || null,
+      mimeType: m.attachments[0]?.mimeType || null,
+      fileName: m.attachments[0]?.fileName || null,
+      sizeBytes: m.attachments[0]?.sizeBytes || null,
+      senderName: m.senderUser?.name || null,
+      createdAt: m.createdAt,
+      attachments: m.attachments,
+    }));
+
+    return { items, nextCursor, hasMore };
+  }
+
+  // ============================================
+  // ✅ FEATURE 3: Block Thread
+  // ============================================
+  async blockThread(threadId: string, userId: string) {
+    const thread = await this.getThreadById(threadId, userId);
+
+    // Get the user's org that is part of this thread
+    const membership = await prisma.orgMember.findFirst({
+      where: { userId, orgId: { in: [thread.orgId, thread.counterpartyOrgId] } },
+    });
+    if (!membership) throw new ForbiddenError('Not authorized');
+
+    if (thread.blockedByOrgId) {
+      throw new ConflictError('Already blocked');
+    }
+
+    const updated = await prisma.chatThread.update({
+      where: { id: threadId },
+      data: { blockedByOrgId: membership.orgId, blockedAt: new Date() },
+      include: {
+        org: { select: { id: true, name: true, gstin: true } },
+        counterpartyOrg: { select: { id: true, name: true, gstin: true } },
+      },
+    });
+
+    // Broadcast block event
+    try {
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:blocked', {
+          blockedByOrgId: membership.orgId,
+          blockedAt: updated.blockedAt,
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to broadcast block event', { threadId, error });
+    }
+
+    return updated;
+  }
+
+  // ============================================
+  // ✅ FEATURE 3: Unblock Thread
+  // ============================================
+  async unblockThread(threadId: string, userId: string) {
+    const thread = await this.getThreadById(threadId, userId);
+
+    if (!thread.blockedByOrgId) {
+      throw new ValidationError('Thread is not blocked');
+    }
+
+    // Get the user's org
+    const membership = await prisma.orgMember.findFirst({
+      where: { userId, orgId: { in: [thread.orgId, thread.counterpartyOrgId] } },
+    });
+    if (!membership) throw new ForbiddenError('Not authorized');
+
+    // Only the org that blocked can unblock
+    if (thread.blockedByOrgId !== membership.orgId) {
+      throw new ForbiddenError('Only the org that blocked can unblock');
+    }
+
+    const updated = await prisma.chatThread.update({
+      where: { id: threadId },
+      data: { blockedByOrgId: null, blockedAt: null },
+      include: {
+        org: { select: { id: true, name: true, gstin: true } },
+        counterpartyOrg: { select: { id: true, name: true, gstin: true } },
+      },
+    });
+
+    // Broadcast unblock event
+    try {
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:unblocked', {
+          threadId,
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to broadcast unblock event', { threadId, error });
+    }
+
+    return updated;
+  }
+
+  // ============================================
+  // ✅ FEATURE 4: Clear Chat (soft-delete all messages)
+  // ============================================
+  async clearChat(threadId: string, userId: string) {
+    await this.getThreadById(threadId, userId);
+
+    // Get count before clearing
+    const messageCount = await prisma.chatMessage.count({
+      where: { threadId, isDeletedForEveryone: false },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      // Soft-delete all messages (preserve for audit trail)
+      await tx.chatMessage.updateMany({
+        where: { threadId, isDeletedForEveryone: false },
+        data: { isDeletedForEveryone: true, deletedAt: new Date() },
+      });
+
+      // Clear thread preview
+      await tx.chatThread.update({
+        where: { id: threadId },
+        data: { lastMessageText: null, lastMessageAt: null },
+      });
+    });
+
+    // Broadcast clear event
+    try {
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:cleared', {
+          threadId, clearedAt: new Date(),
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to broadcast clear event', { threadId, error });
+    }
+
+    return { clearedCount: messageCount, threadId };
+  }
+
+  // ============================================
+  // ✅ FEATURE 4: Delete Thread (hard delete, owners only)
+  // ============================================
+  async deleteThread(threadId: string, userId: string) {
+    const thread = await this.getThreadById(threadId, userId);
+
+    // Verify the requesting user belongs to one of the thread's orgs
+    const membership = await prisma.orgMember.findFirst({
+      where: { userId, orgId: { in: [thread.orgId, thread.counterpartyOrgId] } },
+    });
+    if (!membership) throw new ForbiddenError('Not authorized to delete this thread');
+
+    // Delete thread (CASCADE handles messages due to schema onDelete: Cascade)
+    await prisma.chatThread.delete({
+      where: { id: threadId },
+    });
+
+    // Broadcast delete event
+    try {
+      if ((global as any).socketGateway) {
+        (global as any).socketGateway.broadcastToChat(threadId, 'chat:thread_deleted', {
+          threadId,
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to broadcast thread delete event', { threadId, error });
+    }
+
+    return { deleted: true, threadId };
   }
 }

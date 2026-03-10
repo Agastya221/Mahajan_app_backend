@@ -3,6 +3,8 @@ import Redis from 'ioredis';
 import { config } from '../config/env';
 import { NotificationPayload, NotificationType } from './notification.types';
 import { logger } from '../utils/logger';
+import { sendFcmNotification, sendFcmMulticast } from '../config/firebase';
+import prisma from '../config/database';
 
 const connection = new Redis({
   host: config.redis.host,
@@ -11,150 +13,99 @@ const connection = new Redis({
   maxRetriesPerRequest: null,
 });
 
-// Filter out BullMQ warning about Redis version/eviction policy
+// Suppress BullMQ Redis version warnings
 const originalWarn = console.warn;
 console.warn = (...args) => {
-  if (
-    args[0] &&
-    typeof args[0] === 'string' &&
-    (args[0].includes('Eviction policy is volatile-lru') || args[0].includes('Redis Version'))
-  ) {
+  if (args[0] && typeof args[0] === 'string' &&
+    (args[0].includes('Eviction policy is volatile-lru') || args[0].includes('Redis Version'))) {
     return;
   }
   originalWarn.apply(console, args);
 };
 
-// Worker to process notification jobs
+// ============================================================
+// HELPER: Get FCM token(s) for a user or all users in an org
+// ============================================================
+
+async function getFcmTokenForUser(userId: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fcmToken: true },
+  });
+  return user?.fcmToken || null;
+}
+
+async function getFcmTokensForOrg(orgId: string): Promise<string[]> {
+  const members = await prisma.orgMember.findMany({
+    where: { orgId },
+    include: { user: { select: { fcmToken: true } } },
+  });
+  return members
+    .map((m) => m.user.fcmToken)
+    .filter((t): t is string => !!t);
+}
+
+// ============================================================
+// WORKER
+// ============================================================
+
 export const notificationWorker = new Worker<NotificationPayload>(
   'notifications',
   async (job: Job<NotificationPayload>) => {
-    const { type, recipientUserId, recipientOrgId, data } = job.data;
+    const { type, recipientUserId, recipientOrgId, title, body, data } = job.data;
 
-    logger.info(`Processing notification: ${type} for user ${recipientUserId || 'org ' + recipientOrgId}`);
+    logger.info(`Processing notification: ${type}`, {
+      recipientUserId,
+      recipientOrgId,
+    });
+
+    // Convert data values to strings (FCM requirement)
+    const fcmData: Record<string, string> = {};
+    if (data) {
+      for (const [k, v] of Object.entries(data)) {
+        if (v !== null && v !== undefined) {
+          fcmData[k] = String(v);
+        }
+      }
+    }
+    fcmData['notificationType'] = type;
 
     try {
-      switch (type) {
-        case NotificationType.TRIP_CREATED:
-          await sendTripCreatedNotification(recipientUserId!, data);
-          break;
-
-        case NotificationType.TRIP_STATUS_CHANGED:
-          await sendTripStatusNotification(recipientUserId!, data);
-          break;
-
-        case NotificationType.LOAD_CARD_CREATED:
-          await sendLoadCardNotification(recipientOrgId!, data);
-          break;
-
-        case NotificationType.RECEIVE_CARD_CREATED:
-          await sendReceiveCardNotification(recipientOrgId!, data);
-          break;
-
-        case NotificationType.PAYMENT_RECEIVED:
-          await sendPaymentNotification(recipientOrgId!, data);
-          break;
-
-        case NotificationType.INVOICE_CREATED:
-          await sendInvoiceNotification(recipientOrgId!, data);
-          break;
-
-        case NotificationType.CHAT_MESSAGE:
-          await sendChatMessageNotification(recipientUserId!, data);
-          break;
-
-        default:
-          logger.warn('Unknown notification type:', type);
+      if (recipientUserId) {
+        // Send to single user
+        const token = await getFcmTokenForUser(recipientUserId);
+        if (token) {
+          const sent = await sendFcmNotification(token, title, body, fcmData);
+          logger.info(`FCM to user ${recipientUserId}: ${sent ? 'sent' : 'skipped (invalid token)'}`);
+        } else {
+          logger.info(`No FCM token for user ${recipientUserId} — skipping`);
+        }
+      } else if (recipientOrgId) {
+        // Send to all members of org
+        const tokens = await getFcmTokensForOrg(recipientOrgId);
+        if (tokens.length > 0) {
+          const result = await sendFcmMulticast(tokens, title, body, fcmData);
+          logger.info(`FCM multicast to org ${recipientOrgId}: ${result.successCount} sent, ${result.failureCount} failed`);
+        } else {
+          logger.info(`No FCM tokens for org ${recipientOrgId} — skipping`);
+        }
+      } else {
+        logger.warn('Notification has neither recipientUserId nor recipientOrgId — skipping');
       }
 
-      logger.info(`Notification sent successfully: ${type}`);
       return { success: true };
     } catch (error) {
-      logger.error(`Failed to send notification: ${type}`, error);
-      throw error; // Re-throw to trigger retry
+      logger.error(`Failed to process notification: ${type}`, error);
+      throw error; // triggers BullMQ retry
     }
   },
   {
     connection: connection as any,
-    concurrency: 5, // Process up to 5 jobs concurrently
-    limiter: {
-      max: 10, // Max 10 jobs
-      duration: 1000, // per 1 second
-    },
+    concurrency: 5,
+    limiter: { max: 10, duration: 1000 },
   }
 );
 
-// Notification sending functions (placeholders for actual implementation)
-
-async function sendTripCreatedNotification(userId: string, data: any) {
-  // TODO: Integrate with Firebase Cloud Messaging or AWS SNS
-  logger.info(`[PUSH] Trip created notification to user ${userId}:`, {
-    title: 'New Trip Assigned',
-    body: `Trip from ${data.startPoint} to ${data.endPoint}`,
-    data,
-  });
-
-  // Example FCM implementation:
-  // await admin.messaging().sendToDevice(userToken, {
-  //   notification: {
-  //     title: 'New Trip Assigned',
-  //     body: `Trip from ${data.startPoint} to ${data.endPoint}`,
-  //   },
-  //   data: {
-  //     tripId: data.tripId,
-  //     type: 'TRIP_CREATED',
-  //   },
-  // });
-}
-
-async function sendTripStatusNotification(userId: string, data: any) {
-  logger.info(`[PUSH] Trip status notification to user ${userId}:`, {
-    title: 'Trip Status Updated',
-    body: `Trip status changed to ${data.status}`,
-    data,
-  });
-}
-
-async function sendLoadCardNotification(orgId: string, data: any) {
-  logger.info(`[PUSH] Load card notification to org ${orgId}:`, {
-    title: 'Load Card Created',
-    body: `${data.quantity} ${data.unit} loaded`,
-    data,
-  });
-}
-
-async function sendReceiveCardNotification(orgId: string, data: any) {
-  logger.info(`[PUSH] Receive card notification to org ${orgId}:`, {
-    title: 'Goods Received',
-    body: `${data.receivedQuantity} ${data.unit} received${data.shortage > 0 ? ` (Shortage: ${data.shortage})` : ''}`,
-    data,
-  });
-}
-
-async function sendPaymentNotification(orgId: string, data: any) {
-  logger.info(`[PUSH] Payment notification to org ${orgId}:`, {
-    title: 'Payment Received',
-    body: `₹${data.amount} received via ${data.paymentMethod}`,
-    data,
-  });
-}
-
-async function sendInvoiceNotification(orgId: string, data: any) {
-  logger.info(`[PUSH] Invoice notification to org ${orgId}:`, {
-    title: 'New Invoice',
-    body: `Invoice ${data.invoiceNumber} for ₹${data.amount}`,
-    data,
-  });
-}
-
-async function sendChatMessageNotification(userId: string, data: any) {
-  logger.info(`[PUSH] Chat message notification to user ${userId}:`, {
-    title: data.senderName || 'New Message',
-    body: data.content || 'Sent an attachment',
-    data,
-  });
-}
-
-// Worker event handlers
 notificationWorker.on('completed', (job) => {
   logger.info(`Notification job ${job.id} completed`);
 });

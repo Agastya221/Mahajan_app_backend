@@ -27,6 +27,7 @@ const S3_FOLDER_MAPPING: Record<string, string> = {
   PAYMENT_PROOF: 'proofs/payments',
   INVOICE: 'documents/invoices',
   CHAT_ATTACHMENT: 'chat',
+  PROFILE_PHOTO: 'profiles',
 };
 
 const DEFAULT_S3_FOLDER = 'uploads';
@@ -343,6 +344,7 @@ export class FileService {
       PAYMENT_PROOF: AttachmentType.PAYMENT_PROOF,
       INVOICE: AttachmentType.INVOICE,
       RECEIPT: AttachmentType.RECEIPT,
+      PROFILE_PHOTO: AttachmentType.PROFILE_PHOTO,
     };
 
     if (purpose === 'CHAT_ATTACHMENT') {

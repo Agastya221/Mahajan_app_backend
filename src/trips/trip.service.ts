@@ -1,9 +1,12 @@
 import prisma from '../config/database';
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../utils/errors';
 import { CreateTripDto, UpdateTripDto, CreateLoadCardDto, CreateReceiveCardDto } from './trip.dto';
-import { TripStatus, TripEventType, UserRole, Prisma } from '@prisma/client';
+import { TripStatus, TripEventType, UserRole, Prisma, LedgerDirection, LedgerTransactionType } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
+import { LedgerService } from '../ledger/ledger.service';
+import { notificationService } from '../notifications/notification.service';
+import { NotificationType } from '../notifications/notification.types';
 
 const { Decimal } = Prisma;
 
@@ -239,6 +242,7 @@ export class TripService {
               description: `Trip payment (already paid) - ${data.goodsPaymentTag || 'OTHER'}`,
               referenceType: 'PAYMENT',
               referenceId: payment.id,
+              transactionType: LedgerTransactionType.PAYMENT,
             },
           });
 
@@ -263,6 +267,7 @@ export class TripService {
                 description: `Trip payment sent`,
                 referenceType: 'PAYMENT',
                 referenceId: payment.id,
+                transactionType: LedgerTransactionType.PAYMENT,
               },
             });
           }
@@ -284,6 +289,24 @@ export class TripService {
 
       return newTrip;
     });
+
+    // ✅ Push notification: Notify assigned driver (non-blocking)
+    if (trip.driverId) {
+      prisma.driverProfile.findUnique({
+        where: { id: trip.driverId },
+        select: { userId: true },
+      }).then((driverProfile) => {
+        if (driverProfile) {
+          notificationService.enqueueNotification({
+            type: NotificationType.TRIP_CREATED,
+            recipientUserId: driverProfile.userId,
+            title: 'New Trip Assigned',
+            body: `Trip from ${trip.startPoint} to ${trip.endPoint}`,
+            data: { tripId: trip.id, startPoint: trip.startPoint, endPoint: trip.endPoint },
+          }).catch(err => logger.error('Failed to queue trip created notification', err));
+        }
+      }).catch(err => logger.error('Failed to lookup driver for notification', err));
+    }
 
     return trip;
   }
@@ -543,6 +566,15 @@ export class TripService {
       });
     }
 
+    // ✅ Push notification: Notify source org about status change
+    notificationService.enqueueNotification({
+      type: NotificationType.TRIP_STATUS_CHANGED,
+      recipientOrgId: updated.sourceOrgId,
+      title: 'Trip Status Updated',
+      body: `Trip to ${updated.endPoint} is now ${data.status.toLowerCase().replace('_', ' ')}`,
+      data: { tripId, status: data.status },
+    }).catch(err => logger.error('Failed to queue trip status notification', err));
+
     return updated;
   }
 
@@ -715,6 +747,15 @@ export class TripService {
       loadCardId: loadCard.id,
       itemCount: data.items.length,
     });
+
+    // ✅ Push notification: Notify destination org about load card
+    notificationService.enqueueNotification({
+      type: NotificationType.LOAD_CARD_CREATED,
+      recipientOrgId: trip.destinationOrgId,
+      title: 'Goods Loaded',
+      body: `${data.items.length} items loaded for trip from ${trip.sourceOrg.name}`,
+      data: { tripId, itemCount: String(data.items.length) },
+    }).catch(err => logger.error('Failed to queue load card notification', err));
 
     return loadCard;
   }
@@ -911,7 +952,168 @@ export class TripService {
         },
       });
 
-      return { newReceiveCard, hasShortage, totalShortage, overallShortagePercent, itemsToCreate };
+      // ✅ FEATURE 1: Auto-create invoice if totalAmount > 0 (rates were provided)
+      let autoInvoice = null;
+      if (totalAmount.gt(0)) {
+        const totalAmountPaise = BigInt(Math.round(totalAmount.toNumber() * 100));
+        const invoiceNumber = `TRIP-${tripId.slice(-8).toUpperCase()}`;
+
+        // Sort orgIds alphabetically to determine account ownership (same pattern as createTrip)
+        const [orgA, orgB] = trip.sourceOrgId < trip.destinationOrgId
+          ? [trip.sourceOrgId, trip.destinationOrgId]
+          : [trip.destinationOrgId, trip.sourceOrgId];
+
+        // sourceOrg is always the one owed money — find their account where sourceOrg is ownerOrg
+        // Find or create Account pair
+        let sourceAccount = await tx.account.findUnique({
+          where: {
+            ownerOrgId_counterpartyOrgId: {
+              ownerOrgId: trip.sourceOrgId,
+              counterpartyOrgId: trip.destinationOrgId,
+            },
+          },
+        });
+
+        if (!sourceAccount) {
+          // Create both accounts
+          sourceAccount = await tx.account.create({
+            data: { ownerOrgId: trip.sourceOrgId, counterpartyOrgId: trip.destinationOrgId, balance: 0n },
+          });
+          await tx.account.create({
+            data: { ownerOrgId: trip.destinationOrgId, counterpartyOrgId: trip.sourceOrgId, balance: 0n },
+          });
+        }
+
+        let destAccount = await tx.account.findUnique({
+          where: {
+            ownerOrgId_counterpartyOrgId: {
+              ownerOrgId: trip.destinationOrgId,
+              counterpartyOrgId: trip.sourceOrgId,
+            },
+          },
+        });
+
+        if (!destAccount) {
+          destAccount = await tx.account.create({
+            data: { ownerOrgId: trip.destinationOrgId, counterpartyOrgId: trip.sourceOrgId, balance: 0n },
+          });
+        }
+
+        // Idempotency guard: check if invoice with this number already exists
+        const existingInvoice = await tx.invoice.findFirst({
+          where: {
+            accountId: sourceAccount.id,
+            invoiceNumber: invoiceNumber,
+          },
+        });
+
+        if (!existingInvoice) {
+          // Build description from items (max 3 items then "+ N more")
+          const descItems = itemsToCreate.slice(0, 3).map(
+            (i) => `${i.itemName} ${i.quantity}${i.unit}`
+          );
+          const remaining = itemsToCreate.length - 3;
+          const description = remaining > 0
+            ? `Trip delivery: ${descItems.join(', ')} + ${remaining} more`
+            : `Trip delivery: ${descItems.join(', ')}`;
+
+          // Row-level lock on both accounts before updating balances
+          await tx.$queryRaw`SELECT id, balance FROM "Account" WHERE id = ${sourceAccount.id} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id, balance FROM "Account" WHERE id = ${destAccount.id} FOR UPDATE`;
+
+          // Create Invoice
+          autoInvoice = await tx.invoice.create({
+            data: {
+              accountId: sourceAccount.id,
+              tripId: tripId,
+              invoiceNumber: invoiceNumber,
+              total: totalAmountPaise,
+              dueAmount: totalAmountPaise,
+              description: description,
+              status: 'OPEN',
+            },
+          });
+
+          // Create InvoiceItems from receive card items
+          if (newReceiveCard.items && newReceiveCard.items.length > 0) {
+            const invoiceItemsData = newReceiveCard.items.map((item: any, index: number) => ({
+              invoiceId: autoInvoice!.id,
+              itemName: item.itemName,
+              itemNameHindi: item.itemNameHindi || null,
+              quantity: item.quantity,
+              unit: item.unit,
+              rate: item.rate || null,
+              amount: item.amount ? BigInt(Math.round(Number(item.amount) * 100)) : null,
+              sortOrder: index,
+            }));
+
+            await tx.invoiceItem.createMany({ data: invoiceItemsData });
+          }
+
+          // Update sourceOrg's Account balance (increment — money owed TO them)
+          const updatedSourceAccount = await tx.account.update({
+            where: { id: sourceAccount.id },
+            data: { balance: { increment: totalAmountPaise } },
+            select: { balance: true },
+          });
+
+          // Create LedgerEntry for sourceOrg's account (RECEIVABLE — they are owed this money)
+          await tx.ledgerEntry.create({
+            data: {
+              accountId: sourceAccount.id,
+              direction: LedgerDirection.RECEIVABLE,
+              amount: totalAmountPaise,
+              balance: updatedSourceAccount.balance,
+              description: description,
+              referenceType: 'INVOICE',
+              referenceId: autoInvoice.id,
+              tripId: tripId,
+              transactionType: LedgerTransactionType.TRIP,
+            },
+          });
+
+          // Update destinationOrg's mirror Account balance (decrement — they owe this money)
+          const updatedDestAccount = await tx.account.update({
+            where: { id: destAccount.id },
+            data: { balance: { decrement: totalAmountPaise } },
+            select: { balance: true },
+          });
+
+          // Create mirror LedgerEntry for destinationOrg's account (PAYABLE)
+          await tx.ledgerEntry.create({
+            data: {
+              accountId: destAccount.id,
+              direction: LedgerDirection.PAYABLE,
+              amount: totalAmountPaise,
+              balance: updatedDestAccount.balance,
+              description: `Invoice from ${trip.sourceOrg.name} - Trip delivery`,
+              referenceType: 'INVOICE',
+              referenceId: autoInvoice.id,
+              tripId: tripId,
+              transactionType: LedgerTransactionType.TRIP,
+            },
+          });
+
+          // ✅ FEATURE 3: Auto-apply any existing advance balance to this invoice
+          const ledgerService = new LedgerService();
+          await (ledgerService as any).applyAdvanceToInvoice(sourceAccount.id, autoInvoice.id, tx);
+
+          logger.info('Auto-invoice created for receive card', {
+            tripId,
+            invoiceId: autoInvoice.id,
+            invoiceNumber,
+            totalAmountPaise: totalAmountPaise.toString(),
+          });
+        } else {
+          logger.info('Auto-invoice already exists, skipping', {
+            tripId,
+            invoiceNumber,
+          });
+          autoInvoice = existingInvoice;
+        }
+      }
+
+      return { newReceiveCard, hasShortage, totalShortage, overallShortagePercent, itemsToCreate, autoInvoice };
     });
 
     // Send shortage alert to source Mahajan (non-blocking)
@@ -964,6 +1166,22 @@ export class TripService {
         });
       }
     }
+
+    // ✅ Push notification: Notify source org about receive card
+    const shortageMsg = receiveCard.totalShortage.gt(0)
+      ? ` — Shortage: ${receiveCard.totalShortage.toNumber()} units`
+      : '';
+    notificationService.enqueueNotification({
+      type: NotificationType.RECEIVE_CARD_CREATED,
+      recipientOrgId: trip.sourceOrgId,
+      title: 'Goods Received',
+      body: `${data.items.length} items received by ${trip.destinationOrg.name}${shortageMsg}`,
+      data: {
+        tripId,
+        hasShortage: String(receiveCard.totalShortage.gt(0)),
+        totalShortage: String(receiveCard.totalShortage.toNumber()),
+      },
+    }).catch(err => logger.error('Failed to queue receive card notification', err));
 
     return receiveCard.newReceiveCard;
   }

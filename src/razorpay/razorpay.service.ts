@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import prisma from '../config/database';
 import { config } from '../config/env';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
-import { LedgerDirection, DriverPaymentStatus } from '@prisma/client';
+import { LedgerDirection, DriverPaymentStatus, LedgerTransactionType } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
 import {
@@ -376,6 +376,7 @@ export class RazorpayService {
                         description: `Razorpay payment received (${data.razorpay_payment_id})`,
                         referenceType: 'PAYMENT',
                         referenceId: payment.id,
+                        transactionType: LedgerTransactionType.PAYMENT,
                     },
                 });
 
@@ -405,6 +406,27 @@ export class RazorpayService {
                             description: `Razorpay payment sent to ${payment.account.ownerOrg.name}`,
                             referenceType: 'PAYMENT',
                             referenceId: payment.id,
+                            transactionType: LedgerTransactionType.PAYMENT,
+                        },
+                    });
+                }
+            }
+
+            // ✅ FEATURE 2: Update invoice paidAmount/dueAmount/status if invoiceId linked
+            if (payment.invoiceId) {
+                const invoice = await tx.invoice.findUnique({
+                    where: { id: payment.invoiceId },
+                });
+                if (invoice) {
+                    const newPaidAmount = invoice.paidAmount + payment.amount;
+                    const newDueAmount = invoice.total - newPaidAmount;
+                    const newStatus = newDueAmount <= 0n ? 'PAID' : (newPaidAmount > 0n ? 'PARTIAL' : invoice.status);
+                    await tx.invoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            paidAmount: newPaidAmount,
+                            dueAmount: newDueAmount < 0n ? 0n : newDueAmount,
+                            status: newStatus,
                         },
                     });
                 }

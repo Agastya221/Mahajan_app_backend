@@ -10,9 +10,11 @@ import {
   ConfirmPaymentDto,
   DisputePaymentDto,
 } from './ledger.dto';
-import { LedgerDirection } from '@prisma/client';
+import { LedgerDirection, LedgerTransactionType } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
 import { logger } from '../utils/logger';
+import { notificationService } from '../notifications/notification.service';
+import { NotificationType } from '../notifications/notification.types';
 
 const chatService = new ChatService();
 
@@ -212,17 +214,53 @@ export class LedgerService {
 
     // Create invoice + ledger entry in transaction with Serializable isolation
     // This prevents phantom reads and ensures financial data integrity
+
+    // Auto-calculate amount from items if not explicitly provided
+    let invoiceAmount = data.amount;
+    if (!invoiceAmount && data.items && data.items.length > 0) {
+      const computed = data.items.reduce((sum, item) => {
+        if (item.rate) return sum + Math.round(item.quantity * item.rate * 100);
+        return sum;
+      }, 0);
+      if (computed <= 0) throw new ValidationError('Cannot auto-calculate amount: no items have rates');
+      invoiceAmount = computed;
+    }
+    if (!invoiceAmount) throw new ValidationError('Either amount or items with rates must be provided');
+
     const result = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.create({
         data: {
           accountId: data.accountId,
           invoiceNumber: data.invoiceNumber,
-          total: data.amount,
+          total: invoiceAmount!,
+          dueAmount: invoiceAmount!, // Initially dueAmount = total
           description: data.description,
           dueDate: data.dueDate ? new Date(data.dueDate) : null,
           status: 'OPEN',
         },
       });
+
+      // Create InvoiceItems if provided
+      if (data.items && data.items.length > 0) {
+        const itemsToCreate = data.items.map((item, index) => {
+          const amountPaise = item.rate
+            ? BigInt(Math.round(item.quantity * item.rate * 100))
+            : null;
+          return {
+            invoiceId: invoice.id,
+            itemName: item.itemName,
+            itemNameHindi: item.itemNameHindi || null,
+            quantity: item.quantity,
+            unit: item.unit,
+            rate: item.rate || null,
+            amount: amountPaise,
+            notes: item.notes || null,
+            sortOrder: index,
+          };
+        });
+
+        await tx.invoiceItem.createMany({ data: itemsToCreate });
+      }
 
       // Link attachments if provided
       if (data.attachmentIds && data.attachmentIds.length > 0) {
@@ -241,7 +279,7 @@ export class LedgerService {
       // Update account balance atomically
       const updatedAccount = await tx.account.update({
         where: { id: data.accountId },
-        data: { balance: { increment: data.amount } },
+        data: { balance: { increment: invoiceAmount! } },
         select: { balance: true },
       });
 
@@ -252,11 +290,12 @@ export class LedgerService {
         data: {
           accountId: data.accountId,
           direction: LedgerDirection.PAYABLE,
-          amount: data.amount,
+          amount: invoiceAmount!,
           balance: newBalance,
           description: `Invoice ${data.invoiceNumber}${data.description ? ': ' + data.description : ''}`,
           referenceType: 'INVOICE',
           referenceId: invoice.id,
+          transactionType: LedgerTransactionType.INVOICE,
         },
       });
 
@@ -280,7 +319,7 @@ export class LedgerService {
       // ✅ CRITICAL FIX: Update mirror account balance atomically
       const updatedMirror = await tx.account.update({
         where: { id: mirrorAccount.id },
-        data: { balance: { decrement: data.amount } },
+        data: { balance: { decrement: invoiceAmount! } },
         select: { balance: true },
       });
 
@@ -289,15 +328,27 @@ export class LedgerService {
         data: {
           accountId: mirrorAccount.id,
           direction: LedgerDirection.RECEIVABLE,
-          amount: data.amount,
+          amount: invoiceAmount!,
           balance: updatedMirror.balance,
           description: `Invoice ${data.invoiceNumber} from ${account.ownerOrg.name}`,
           referenceType: 'INVOICE',
           referenceId: invoice.id,
+          transactionType: LedgerTransactionType.INVOICE,
         },
       });
 
-      return invoice;
+      // ✅ FEATURE 3: Auto-apply any existing advance balance to this invoice
+      await this.applyAdvanceToInvoice(data.accountId, invoice.id, tx);
+
+      // Re-fetch invoice to get updated paidAmount/dueAmount after advance apply
+      const finalInvoice = await tx.invoice.findUnique({
+        where: { id: invoice.id },
+        include: {
+          items: { orderBy: { sortOrder: 'asc' } },
+        },
+      });
+
+      return finalInvoice || invoice;
     });
 
     // ✅ Post INVOICE_CARD to chat (non-blocking)
@@ -310,6 +361,20 @@ export class LedgerService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+
+    // ✅ Push notification: Notify counterparty org about new invoice
+    notificationService.enqueueNotification({
+      type: NotificationType.INVOICE_CREATED,
+      recipientOrgId: account.counterpartyOrgId,
+      title: 'New Invoice',
+      body: `Invoice ${data.invoiceNumber} for ₹${(Number(invoiceAmount!) / 100).toLocaleString('en-IN')} from ${account.ownerOrg.name}`,
+      data: {
+        invoiceId: result.id,
+        invoiceNumber: data.invoiceNumber,
+        amount: String(invoiceAmount),
+        accountId: data.accountId,
+      },
+    }).catch(err => logger.error('Failed to queue invoice notification', err));
 
     return result;
   }
@@ -324,6 +389,9 @@ export class LedgerService {
         where,
         include: {
           attachments: true,
+          items: {
+            orderBy: { sortOrder: 'asc' },
+          },
         },
         orderBy: {
           createdAt: 'desc',
@@ -453,15 +521,20 @@ export class LedgerService {
       const newBalance = updatedAccount.balance;
 
       // Create ledger entry
+      const ledgerDescription = data.tag === 'ADVANCE'
+        ? `Advance payment received (${data.paymentMethod})${data.remarks ? ': ' + data.remarks : ''}`
+        : `Payment received - ${data.tag} (${data.paymentMethod})${data.remarks ? ': ' + data.remarks : ''}`;
+
       await tx.ledgerEntry.create({
         data: {
           accountId: data.accountId,
           direction: LedgerDirection.RECEIVABLE,
           amount: data.amount,
           balance: newBalance,
-          description: `Payment received - ${data.tag} (${data.paymentMethod})${data.remarks ? ': ' + data.remarks : ''}`,
+          description: ledgerDescription,
           referenceType: 'PAYMENT',
           referenceId: payment.id,
+          transactionType: data.tag === 'ADVANCE' ? LedgerTransactionType.ADVANCE : LedgerTransactionType.PAYMENT,
         },
       });
 
@@ -499,8 +572,22 @@ export class LedgerService {
           description: `Payment sent to ${account.ownerOrg.name} - ${data.tag}`,
           referenceType: 'PAYMENT',
           referenceId: payment.id,
+          transactionType: data.tag === 'ADVANCE' ? LedgerTransactionType.ADVANCE : LedgerTransactionType.PAYMENT,
         },
       });
+
+      // ✅ FEATURE 3: If ADVANCE payment with no invoiceId, increment advanceBalance
+      if (data.tag === 'ADVANCE') {
+        await tx.account.update({
+          where: { id: data.accountId },
+          data: { advanceBalance: { increment: data.amount } },
+        });
+        // Also update mirror account advanceBalance
+        await tx.account.update({
+          where: { id: mirrorAccount.id },
+          data: { advanceBalance: { increment: data.amount } },
+        });
+      }
 
       // ✅ Post payment update to org-pair chat via chatService (handles thread creation)
       // The actual chat message is sent outside the transaction as non-blocking
@@ -661,6 +748,15 @@ export class LedgerService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+
+    // ✅ Push notification: Notify counterparty org about payment request
+    notificationService.enqueueNotification({
+      type: NotificationType.PAYMENT_RECEIVED,
+      recipientOrgId: account.counterpartyOrgId,
+      title: 'Payment Requested',
+      body: `₹${(Number(data.amount) / 100).toLocaleString('en-IN')} payment requested by ${account.ownerOrg.name}`,
+      data: { paymentId: payment.id, amount: String(data.amount), accountId: data.accountId },
+    }).catch(err => logger.error('Failed to queue payment request notification', err));
 
     return payment;
   }
@@ -840,6 +936,7 @@ export class LedgerService {
           description: `Payment received - ${payment.tag || 'PAYMENT'} (${payment.mode})`,
           referenceType: 'PAYMENT',
           referenceId: payment.id,
+          transactionType: LedgerTransactionType.PAYMENT,
         },
       });
 
@@ -869,8 +966,43 @@ export class LedgerService {
             description: `Payment sent to ${payment.account!.ownerOrg.name}`,
             referenceType: 'PAYMENT',
             referenceId: payment.id,
+            transactionType: LedgerTransactionType.PAYMENT,
           },
         });
+      }
+
+      // ✅ FEATURE 2: Update invoice paidAmount/dueAmount/status if invoiceId linked
+      if (payment.invoiceId) {
+        const invoice = await tx.invoice.findUnique({
+          where: { id: payment.invoiceId },
+        });
+        if (invoice) {
+          const newPaidAmount = invoice.paidAmount + payment.amount;
+          const newDueAmount = invoice.total - newPaidAmount;
+          const newStatus = newDueAmount <= 0n ? 'PAID' : (newPaidAmount > 0n ? 'PARTIAL' : invoice.status);
+          await tx.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              paidAmount: newPaidAmount,
+              dueAmount: newDueAmount < 0n ? 0n : newDueAmount,
+              status: newStatus,
+            },
+          });
+        }
+      }
+
+      // ✅ FEATURE 3: If ADVANCE payment with no invoiceId, increment advanceBalance
+      if (payment.tag === 'ADVANCE' && !payment.invoiceId) {
+        await tx.account.update({
+          where: { id: payment.accountId! },
+          data: { advanceBalance: { increment: payment.amount } },
+        });
+        if (mirrorAccount) {
+          await tx.account.update({
+            where: { id: mirrorAccount.id },
+            data: { advanceBalance: { increment: payment.amount } },
+          });
+        }
       }
 
       // Chat notification is handled after transaction (non-blocking)
@@ -891,6 +1023,17 @@ export class LedgerService {
         paymentId: result.payment.id,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+    }
+
+    // ✅ Push notification: Notify payment sender that their payment was confirmed
+    if (payment.markedPaidBy) {
+      notificationService.enqueueNotification({
+        type: NotificationType.PAYMENT_RECEIVED,
+        recipientUserId: payment.markedPaidBy,
+        title: 'Payment Confirmed',
+        body: `Your payment of ₹${(Number(payment.amount) / 100).toLocaleString('en-IN')} has been confirmed`,
+        data: { paymentId: payment.id, amount: String(payment.amount) },
+      }).catch(err => logger.error('Failed to queue payment confirmed notification', err));
     }
 
     return result;
@@ -1032,5 +1175,105 @@ export class LedgerService {
     }
 
     return payment;
+  }
+
+  // ============================================
+  // ✅ FEATURE 3: Apply Advance Balance to Invoice
+  // ============================================
+  private async applyAdvanceToInvoice(
+    accountId: string,
+    invoiceId: string,
+    tx: any
+  ) {
+    // 1. Fetch account with advanceBalance
+    const account = await tx.account.findUnique({
+      where: { id: accountId },
+      select: { id: true, advanceBalance: true, ownerOrgId: true, counterpartyOrgId: true },
+    });
+
+    if (!account || account.advanceBalance <= 0n) {
+      return; // Nothing to apply
+    }
+
+    // 2. Fetch the invoice (must be OPEN or PARTIAL)
+    const invoice = await tx.invoice.findUnique({
+      where: { id: invoiceId },
+    });
+
+    if (!invoice || (invoice.status !== 'OPEN' && invoice.status !== 'PARTIAL')) {
+      return;
+    }
+
+    // 3. Calculate apply amount = min(advanceBalance, dueAmount)
+    const applyAmount = account.advanceBalance < invoice.dueAmount
+      ? account.advanceBalance
+      : invoice.dueAmount;
+
+    if (applyAmount <= 0n) {
+      return;
+    }
+
+    // 4. Decrement account advanceBalance
+    await tx.account.update({
+      where: { id: accountId },
+      data: { advanceBalance: { decrement: applyAmount } },
+    });
+
+    // 5. Update invoice paidAmount, dueAmount, status
+    const newPaidAmount = invoice.paidAmount + applyAmount;
+    const newDueAmount = invoice.dueAmount - applyAmount;
+    const newStatus = newDueAmount <= 0n ? 'PAID' : 'PARTIAL';
+
+    await tx.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        paidAmount: newPaidAmount,
+        dueAmount: newDueAmount < 0n ? 0n : newDueAmount,
+        status: newStatus,
+      },
+    });
+
+    // 6. Create a LedgerEntry for advance application
+    const updatedAccount = await tx.account.findUnique({
+      where: { id: accountId },
+      select: { balance: true },
+    });
+
+    await tx.ledgerEntry.create({
+      data: {
+        accountId: accountId,
+        direction: LedgerDirection.RECEIVABLE,
+        amount: applyAmount,
+        balance: updatedAccount?.balance || 0n,
+        description: `Advance applied to invoice ${invoice.invoiceNumber}`,
+        referenceType: 'ADVANCE_APPLIED',
+        referenceId: invoice.id,
+        transactionType: LedgerTransactionType.ADVANCE_APPLIED,
+      },
+    });
+
+    // 7. Update mirror account advanceBalance
+    const mirrorAccount = await tx.account.findUnique({
+      where: {
+        ownerOrgId_counterpartyOrgId: {
+          ownerOrgId: account.counterpartyOrgId,
+          counterpartyOrgId: account.ownerOrgId,
+        },
+      },
+    });
+
+    if (mirrorAccount) {
+      await tx.account.update({
+        where: { id: mirrorAccount.id },
+        data: { advanceBalance: { decrement: applyAmount } },
+      });
+    }
+
+    logger.info('Advance applied to invoice', {
+      accountId,
+      invoiceId,
+      applyAmount: applyAmount.toString(),
+      newStatus,
+    });
   }
 }

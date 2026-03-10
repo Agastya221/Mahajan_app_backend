@@ -4,6 +4,7 @@ import {
   registerSchema,
   refreshTokenSchema,
   verifyWidgetTokenSchema,
+  registerFcmTokenSchema,
 } from './auth.dto';
 import { msg91Service } from './msg91.service';
 import { asyncHandler } from '../middleware/error.middleware';
@@ -111,5 +112,15 @@ export class AuthController {
       success: true,
       message: 'Logged out successfully',
     });
+  });
+
+  /**
+   * Register FCM device token for push notifications
+   * Called on app open and when token refreshes
+   */
+  registerFcmToken = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { fcmToken } = registerFcmTokenSchema.parse(req.body);
+    await authService.registerFcmToken(req.user!.id, fcmToken);
+    res.json({ success: true, message: 'FCM token registered' });
   });
 }

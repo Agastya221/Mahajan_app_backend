@@ -9,10 +9,18 @@ export const createAccountSchema = z.object({
 export const createInvoiceSchema = z.object({
   accountId: z.cuid('Invalid account ID'),
   invoiceNumber: z.string().min(1, 'Invoice number is required'),
-  amount: z.number().positive('Amount must be positive'),
+  amount: z.number().positive('Amount must be positive').optional(),
   description: z.string().optional(),
   dueDate: z.iso.datetime().optional(),
   attachmentIds: z.array(z.cuid()).optional(),
+  items: z.array(z.object({
+    itemName: z.string().min(1).max(100),
+    itemNameHindi: z.string().max(100).optional(),
+    quantity: z.number().positive(),
+    unit: z.string().min(1).max(20),
+    rate: z.number().positive().optional(),
+    notes: z.string().max(200).optional(),
+  })).optional(),
 });
 
 export const updateInvoiceSchema = z.object({

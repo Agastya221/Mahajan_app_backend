@@ -94,6 +94,7 @@ export class UserService {
         id: true,
         name: true,
         phone: true,
+        photoUrl: true,
         status: true,             // ACTIVE | SUSPENDED | BANNED
         isVerified: true,         // GST verified badge
         memberships: {
@@ -116,6 +117,7 @@ export class UserService {
       id: u.id,
       name: u.name,
       phone: u.phone,
+      photoUrl: u.photoUrl,
       status: u.status,           // "ACTIVE" | "SUSPENDED" | "BANNED"
       isVerified: u.isVerified,
       org: u.memberships[0]?.org || null,
