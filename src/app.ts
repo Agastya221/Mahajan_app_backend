@@ -23,7 +23,6 @@ import userRoutes from './users/user.routes';
 import mapRoutes from './map/map.routes';
 import razorpayRoutes from './razorpay/razorpay.routes';
 import userProfileRoutes from './users/user.profile.routes';
-import khataRoutes from './khata/khata.routes';
 import healthRoutes from './health/health.routes';
 import mockLocationRoutes from './dev/mock-location.routes';
 
@@ -113,7 +112,6 @@ export function createApp(): Application {
   app.use('/api/v1/map', mapRoutes);
   app.use('/api/v1/razorpay', razorpayRoutes);
   app.use('/api/v1/profile', userProfileRoutes);
-  app.use('/api/v1', khataRoutes);
 
   // Development-only routes (mock location simulator)
   if (config.nodeEnv === 'development') {

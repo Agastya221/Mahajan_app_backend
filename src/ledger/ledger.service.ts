@@ -1276,4 +1276,217 @@ export class LedgerService {
       newStatus,
     });
   }
+
+  // ============================================
+  // KHATA CONTACT MANAGEMENT (non-registered traders)
+  // ============================================
+
+  private async verifyOrgAccess(orgId: string, userId: string) {
+    const membership = await prisma.orgMember.findUnique({
+      where: { orgId_userId: { orgId, userId } },
+    });
+    if (!membership) throw new ForbiddenError('Not a member of this organization');
+    return membership;
+  }
+
+  private async verifyContactAccess(contactId: string, userId: string) {
+    const contact = await prisma.khataContact.findUnique({
+      where: { id: contactId },
+    });
+    if (!contact) throw new NotFoundError('Khata contact not found');
+    await this.verifyOrgAccess(contact.orgId, userId);
+    return contact;
+  }
+
+  async createKhataContact(orgId: string, data: {
+    name: string;
+    phone?: string;
+    city?: string;
+    notes?: string;
+  }, userId: string) {
+    await this.verifyOrgAccess(orgId, userId);
+
+    if (data.phone) {
+      const existing = await prisma.khataContact.findFirst({
+        where: { orgId, phone: data.phone },
+      });
+      if (existing) throw new ConflictError('A khata contact with this phone already exists');
+    }
+
+    return prisma.khataContact.create({
+      data: {
+        orgId,
+        name: data.name.trim(),
+        phone: data.phone || null,
+        city: data.city || null,
+        notes: data.notes || null,
+        balance: 0n,
+      },
+    });
+  }
+
+  async listKhataContacts(orgId: string, userId: string, page = 1, limit = 50) {
+    await this.verifyOrgAccess(orgId, userId);
+    const safeLimit = Math.min(limit, 100);
+
+    const [contacts, total] = await Promise.all([
+      prisma.khataContact.findMany({
+        where: { orgId },
+        orderBy: { updatedAt: 'desc' },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      prisma.khataContact.count({ where: { orgId } }),
+    ]);
+
+    return {
+      contacts,
+      pagination: { page, limit: safeLimit, total, totalPages: Math.ceil(total / safeLimit) },
+    };
+  }
+
+  async getKhataContact(contactId: string, userId: string) {
+    return this.verifyContactAccess(contactId, userId);
+  }
+
+  async updateKhataContact(contactId: string, data: {
+    name?: string;
+    phone?: string | null;
+    city?: string | null;
+    notes?: string | null;
+  }, userId: string) {
+    await this.verifyContactAccess(contactId, userId);
+
+    return prisma.khataContact.update({
+      where: { id: contactId },
+      data: {
+        ...(data.name ? { name: data.name.trim() } : {}),
+        phone: data.phone !== undefined ? data.phone : undefined,
+        city: data.city !== undefined ? data.city : undefined,
+        notes: data.notes !== undefined ? data.notes : undefined,
+      },
+    });
+  }
+
+  async deleteKhataContact(contactId: string, userId: string) {
+    await this.verifyContactAccess(contactId, userId);
+    await prisma.khataContact.delete({ where: { id: contactId } });
+    return { success: true };
+  }
+
+  async recordKhataEntry(contactId: string, data: {
+    direction: 'PAYABLE' | 'RECEIVABLE';
+    amount: number;
+    description?: string;
+    transactionType?: string;
+  }, userId: string) {
+    await this.verifyContactAccess(contactId, userId);
+
+    if (data.amount <= 0) throw new ValidationError('Amount must be positive');
+
+    const amountPaise = BigInt(Math.round(data.amount * 100));
+
+    return prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRaw<Array<{ id: string; balance: bigint }>>`
+        SELECT id, balance FROM "KhataContact" WHERE id = ${contactId} FOR UPDATE
+      `;
+
+      const newBalance = data.direction === 'PAYABLE'
+        ? locked.balance + amountPaise
+        : locked.balance - amountPaise;
+
+      await tx.khataContact.update({
+        where: { id: contactId },
+        data: { balance: newBalance },
+      });
+
+      return tx.khataEntry.create({
+        data: {
+          khataContactId: contactId,
+          direction: data.direction as LedgerDirection,
+          amount: amountPaise,
+          balance: newBalance,
+          description: data.description || null,
+          transactionType: data.transactionType || 'SALE',
+          referenceType: 'MANUAL',
+        },
+      });
+    });
+  }
+
+  async recordKhataPayment(contactId: string, data: {
+    amount: number;
+    mode?: string;
+    tag?: string;
+    remarks?: string;
+  }, userId: string) {
+    await this.verifyContactAccess(contactId, userId);
+
+    if (data.amount <= 0) throw new ValidationError('Amount must be positive');
+
+    const amountPaise = BigInt(Math.round(data.amount * 100));
+
+    return prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRaw<Array<{ id: string; balance: bigint }>>`
+        SELECT id, balance FROM "KhataContact" WHERE id = ${contactId} FOR UPDATE
+      `;
+
+      const newBalance = locked.balance - amountPaise;
+
+      await tx.khataContact.update({
+        where: { id: contactId },
+        data: { balance: newBalance },
+      });
+
+      await tx.khataEntry.create({
+        data: {
+          khataContactId: contactId,
+          direction: LedgerDirection.RECEIVABLE,
+          amount: amountPaise,
+          balance: newBalance,
+          description: `Payment received${data.mode ? ` via ${data.mode}` : ''}`,
+          transactionType: 'PAYMENT',
+          referenceType: 'PAYMENT',
+        },
+      });
+
+      return tx.khataPayment.create({
+        data: {
+          khataContactId: contactId,
+          amount: amountPaise,
+          mode: data.mode || null,
+          tag: (data.tag as any) || null,
+          remarks: data.remarks || null,
+          recordedBy: userId,
+        },
+      });
+    });
+  }
+
+  async getKhataTimeline(contactId: string, userId: string, limit = 50, offset = 0) {
+    await this.verifyContactAccess(contactId, userId);
+
+    const safeLimit = Math.min(limit, 100);
+
+    const [entries, total] = await Promise.all([
+      prisma.khataEntry.findMany({
+        where: { khataContactId: contactId },
+        orderBy: { createdAt: 'desc' },
+        take: safeLimit,
+        skip: offset,
+      }),
+      prisma.khataEntry.count({ where: { khataContactId: contactId } }),
+    ]);
+
+    const contact = await prisma.khataContact.findUnique({
+      where: { id: contactId },
+      select: { balance: true, name: true },
+    });
+
+    return {
+      contact,
+      entries,
+      pagination: { total, limit: safeLimit, offset, hasMore: offset + safeLimit < total },
+    };
+  }
 }

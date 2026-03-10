@@ -101,4 +101,64 @@ router.get('/accounts/:accountId/pending-payments', authenticate, ledgerControll
  */
 router.get('/payments/:paymentId', authenticate, ledgerController.getPaymentById);
 
+// ============================================
+// KHATA CONTACTS (non-registered traders)
+// ============================================
+
+/**
+ * @route   POST /api/v1/ledger/orgs/:orgId/contacts
+ * @desc    Create khata contact for an org
+ * @access  Private
+ */
+router.post('/orgs/:orgId/contacts', authenticate, ledgerController.createKhataContact);
+
+/**
+ * @route   GET /api/v1/ledger/orgs/:orgId/contacts
+ * @desc    List khata contacts for an org
+ * @access  Private
+ */
+router.get('/orgs/:orgId/contacts', authenticate, ledgerController.listKhataContacts);
+
+/**
+ * @route   GET /api/v1/ledger/contacts/:contactId
+ * @desc    Get khata contact details
+ * @access  Private
+ */
+router.get('/contacts/:contactId', authenticate, ledgerController.getKhataContact);
+
+/**
+ * @route   PATCH /api/v1/ledger/contacts/:contactId
+ * @desc    Update khata contact
+ * @access  Private
+ */
+router.patch('/contacts/:contactId', authenticate, ledgerController.updateKhataContact);
+
+/**
+ * @route   DELETE /api/v1/ledger/contacts/:contactId
+ * @desc    Delete khata contact
+ * @access  Private
+ */
+router.delete('/contacts/:contactId', authenticate, ledgerController.deleteKhataContact);
+
+/**
+ * @route   POST /api/v1/ledger/contacts/:contactId/entries
+ * @desc    Record sale/adjustment entry for khata contact
+ * @access  Private
+ */
+router.post('/contacts/:contactId/entries', authenticate, ledgerController.recordKhataEntry);
+
+/**
+ * @route   POST /api/v1/ledger/contacts/:contactId/payments
+ * @desc    Record payment from khata contact
+ * @access  Private
+ */
+router.post('/contacts/:contactId/payments', authenticate, ledgerController.recordKhataPayment);
+
+/**
+ * @route   GET /api/v1/ledger/contacts/:contactId/timeline
+ * @desc    Get khata contact timeline
+ * @access  Private
+ */
+router.get('/contacts/:contactId/timeline', authenticate, ledgerController.getKhataTimeline);
+
 export default router;

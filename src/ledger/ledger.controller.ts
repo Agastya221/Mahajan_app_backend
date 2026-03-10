@@ -9,6 +9,10 @@ import {
   markPaymentPaidSchema,
   confirmPaymentSchema,
   disputePaymentSchema,
+  createKhataContactSchema,
+  updateKhataContactSchema,
+  recordKhataEntrySchema,
+  recordKhataPaymentSchema,
 } from './ledger.dto';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -234,5 +238,65 @@ export class LedgerController {
       success: true,
       data: result,
     });
+  });
+
+  // ============================================
+  // KHATA CONTACT ENDPOINTS
+  // ============================================
+
+  createKhataContact = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { orgId } = req.params;
+    const data = createKhataContactSchema.parse(req.body);
+    const result = await ledgerService.createKhataContact(orgId, data, req.user!.id);
+    res.status(201).json({ success: true, data: result });
+  });
+
+  listKhataContacts = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { orgId } = req.params;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const result = await ledgerService.listKhataContacts(orgId, req.user!.id, page, limit);
+    res.json({ success: true, data: result.contacts, pagination: result.pagination });
+  });
+
+  getKhataContact = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const result = await ledgerService.getKhataContact(contactId, req.user!.id);
+    res.json({ success: true, data: result });
+  });
+
+  updateKhataContact = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const data = updateKhataContactSchema.parse(req.body);
+    const result = await ledgerService.updateKhataContact(contactId, data, req.user!.id);
+    res.json({ success: true, data: result });
+  });
+
+  deleteKhataContact = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const result = await ledgerService.deleteKhataContact(contactId, req.user!.id);
+    res.json({ success: true, data: result });
+  });
+
+  recordKhataEntry = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const data = recordKhataEntrySchema.parse(req.body);
+    const result = await ledgerService.recordKhataEntry(contactId, data, req.user!.id);
+    res.status(201).json({ success: true, data: result });
+  });
+
+  recordKhataPayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const data = recordKhataPaymentSchema.parse(req.body);
+    const result = await ledgerService.recordKhataPayment(contactId, data, req.user!.id);
+    res.status(201).json({ success: true, data: result });
+  });
+
+  getKhataTimeline = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { contactId } = req.params;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const result = await ledgerService.getKhataTimeline(contactId, req.user!.id, limit, offset);
+    res.json({ success: true, data: result });
   });
 }
