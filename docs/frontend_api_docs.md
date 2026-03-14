@@ -1,10 +1,10 @@
 # Mahajan Network Platform — Frontend API Documentation
 
-> **Generated:** 2026-03-11  
-> **Covers:** All features built in Sprint 1 → Sprint 10  
-> **Base URL:** `{{API_URL}}/api/v1`  
-> **Auth Header:** `Authorization: Bearer <accessToken>`  
-> **Phone format:** `+91XXXXXXXXXX` (with country code)  
+> **Generated:** 2026-03-14
+> **Covers:** All features built in Sprint 1 → Sprint 10
+> **Base URL:** `{{API_URL}}/api/v1`
+> **Auth Header:** `Authorization: Bearer <accessToken>`
+> **Phone format:** `+91XXXXXXXXXX` (with country code)
 > **Amounts:** All monetary values returned from backend are in **paise** (1₹ = 100 paise). Divide by 100 for display. POST/PATCH amounts are in **rupees** unless noted otherwise.
 
 ---
@@ -24,7 +24,7 @@
 11. [Map & Geocoding](#11-map--geocoding)
 12. [Ledger (Accounts & Transactions)](#12-ledger)
 13. [Invoices (with Line Items)](#13-invoices)
-14. [Payments (Two-Party Flow)](#14-payments-two-party-flow)
+14. [Payments](#14-payments)
 15. [Razorpay Payment Gateway](#15-razorpay-payment-gateway)
 16. [Khata Contacts (Offline Ledger)](#16-khata-contacts)
 17. [Chat System](#17-chat-system)
@@ -51,14 +51,14 @@ Step 4: POST /auth/register               → complete signup
 ```
 
 ### `GET /auth/widget-config`
-**Access:** Public  
+**Access:** Public
 **Response:**
 ```json
 { "success": true, "data": { "widgetId": "...", "tokenAuth": "..." } }
 ```
 
 ### `POST /auth/verify-widget-token`
-**Access:** Public (rate-limited: 20 req/15min)  
+**Access:** Public (rate-limited: 20 req/15min)
 **Request:**
 ```json
 { "accessToken": "msg91_access_token_from_sdk" }
@@ -83,7 +83,7 @@ Step 4: POST /auth/register               → complete signup
 ```
 
 ### `POST /auth/register`
-**Access:** Public  
+**Access:** Public
 **Request:**
 ```json
 {
@@ -101,16 +101,16 @@ Step 4: POST /auth/register               → complete signup
 **Response:** `201` — `{ success, user, tokens }`
 
 ### `POST /auth/refresh`
-**Access:** Public (rate-limited: 30 req/15min)  
-**Request:** `{ "refreshToken": "..." }`  
+**Access:** Public (rate-limited: 30 req/15min)
+**Request:** `{ "refreshToken": "..." }`
 **Response:** `{ "success": true, "tokens": { "accessToken": "...", "refreshToken": "..." } }`
 
 ### `POST /auth/logout` 🔒
-**Request (optional):** `{ "refreshToken": "..." }`  
+**Request (optional):** `{ "refreshToken": "..." }`
 Blacklists access token in Redis + revokes refresh token.
 
 ### `POST /auth/fcm-token` 🔒
-**Request:** `{ "fcmToken": "firebase_device_token" }`  
+**Request:** `{ "fcmToken": "firebase_device_token" }`
 Call this on every app open and when the FCM token refreshes.
 
 ---
@@ -118,94 +118,70 @@ Call this on every app open and when the FCM token refreshes.
 ## 2. Organization Management
 
 ### `POST /orgs` 🔒
-Create a new organization (Mahajan).  
-**Request:**
+Create a new organization (Mahajan).
 ```json
 {
   "name": "Rajesh Traders",
-  "city": "Sambalpur",
+  "city": "Nashik",
   "phone": "+919876543210",
-  "gstin": "21ABCDE1234F1Z5",
-  "roleType": "BOTH",
   "address": {
-    "label": "Main Office",
-    "line1": "Mandi Road, Near Bus Stand",
-    "line2": "Shop No. 12",
-    "city": "Sambalpur",
-    "state": "Odisha",
-    "pincode": "768001",
-    "landmark": "Opposite SBI Branch",
-    "contactName": "Rajesh",
-    "contactPhone": "+919876543210"
-  }
+    "line1": "Shop No. 45, Pimpalgaon Baswant APMC",
+    "city": "Nashik",
+    "state": "Maharashtra",
+    "pincode": "422209"
+  },
+  "gstin": "27AABCU9603R1ZV",
+  "roleType": "SOURCE_COLLECTOR"
 }
 ```
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `name` | string | ✅ | Min 2 chars |
-| `city` | string | ❌ | |
-| `phone` | string | ❌ | `+91XXXXXXXXXX` format |
-| `gstin` | string | ❌ | Valid 15-char GSTIN |
-| `roleType` | enum | ❌ | `SOURCE`, `DESTINATION`, `BOTH` (default) |
-| `address` | object | ❌ | Structured address (see format above) |
+| `roleType` | `SOURCE_COLLECTOR`, `DESTINATION_DISTRIBUTOR`, `BOTH` |
+|---|---|
 
 ### `GET /orgs` 🔒
-Get all organizations for the current user.
+Get your orgs. Add `?search=kumar` to search globally by name/phone (min 2 chars).
+Add `?phone=+919876543210` for exact phone match — used in "Add Mahajan" flow.
 
 ### `GET /orgs/:orgId` 🔒
-Get org by ID (must be a member).
-
 ### `PATCH /orgs/:orgId` 🔒
-Update org fields (owner only). Same body as create, all fields optional.
-
 ### `DELETE /orgs/:orgId` 🔒
-Delete organization (owner only).
 
 ---
 
 ## 3. User Profile & Settings
 
-> **Base path:** `/api/v1/profile`
-
 ### `GET /profile` 🔒
-Get current user's profile (name, bio, photoUrl, phone, orgs, etc.)
+Returns current user profile including org and driver profile if applicable.
 
 ### `PATCH /profile/name` 🔒
 ```json
-{ "name": "Rajesh Kumar Mahajan" }
+{ "name": "Rajesh Kumar" }
 ```
-Min 2, max 100 characters.
 
 ### `PATCH /profile/bio` 🔒
 ```json
-{ "bio": "Wholesale trader from Sambalpur, dealing in vegetables since 2005" }
+{ "bio": "Vegetable trader, Azadpur mandi" }
 ```
-Max 200 characters. Send empty string to clear.
+Max 200 chars.
 
-### Profile Photo Upload (2-Step S3 Flow)
+### Profile Photo (2-step S3 upload)
 
 **Step 1: `POST /profile/photo/upload-url`** 🔒
 ```json
 {
-  "filename": "profile.jpg",
+  "filename": "photo.jpg",
   "mimeType": "image/jpeg",
   "fileSize": 245000
 }
 ```
-| Field | Type | Notes |
-|-------|------|-------|
-| `mimeType` | enum | `image/jpeg`, `image/jpg`, `image/png`, `image/webp` |
-| `fileSize` | number | Max 5MB (5242880 bytes) |
-
-**Response:** Returns presigned S3 URL → upload image directly from device to S3.
+**Response:** `{ "uploadUrl": "https://s3...", "fileId": "...", "s3Key": "..." }`
+Upload directly to S3 using the `uploadUrl`.
 
 **Step 2: `POST /profile/photo/confirm`** 🔒
 ```json
-{ "fileId": "clxyz...", "s3Key": "profile-photos/..." }
+{ "fileId": "...", "s3Key": "..." }
 ```
 
-### `DELETE /profile/photo` 🔒
-Remove profile photo.
+**`DELETE /profile/photo`** 🔒 — Removes photo and deletes from S3.
 
 ### Phone Number Change (2-Step OTP Flow)
 
@@ -230,8 +206,8 @@ Returns a `phoneChangeToken` (expires in 10 minutes).
 ## 4. User Actions
 
 ### `POST /users/check-contacts` 🔒
-Contact discovery — check which phone numbers are registered Mahajans.  
-**Rate limit:** 10 req/min  
+Contact discovery — check which phone numbers are registered Mahajans.
+**Rate limit:** 10 req/min
 **Request:**
 ```json
 { "phones": ["+919876543210", "+919812345678", "9876543211"] }
@@ -325,7 +301,7 @@ Query: `?orgId=xxx`
 |---|---|
 
 ### `GET /items/:orgId` 🔒
-Returns org-specific + global items.  
+Returns org-specific + global items.
 Query: `?search=tomato&category=Vegetables&includeInactive=false&page=1&limit=50`
 
 ### `GET /items/:orgId/categories` 🔒
@@ -364,10 +340,12 @@ Soft-delete (deactivates the item).
 
 ### Option B: Server-Side Compressed Upload
 
-**`POST /files/upload-compressed`** 🔒  
-Content-Type: `multipart/form-data`  
-Fields: `file` (binary), `filename`, `mimeType`, `purpose`, `skipCompression`  
+**`POST /files/upload-compressed`** 🔒
+Content-Type: `multipart/form-data`
+Fields: `file` (binary), `filename`, `mimeType`, `purpose`, `skipCompression`
 Server compresses images automatically. Max 10MB.
+
+> ⚠️ For audio uploads: always set `skipCompression: true`.
 
 ### `GET /files/:fileId/download-url` 🔒
 Returns a time-limited S3 download URL.
@@ -415,17 +393,14 @@ Full trip details with load card, receive card, driver, truck.
 ### `PATCH /trips/:tripId` 🔒
 Unified update — handles status changes, edits, cancellation, driver changes.
 ```json
-{
-  "status": "IN_TRANSIT",
-  "remarks": "Driver departed"
-}
+{ "status": "IN_TRANSIT", "remarks": "Driver departed" }
 ```
-**Cancellation:** `{ "status": "CANCELLED", "cancelReason": "Truck broke down" }`  
+**Cancellation:** `{ "status": "CANCELLED", "cancelReason": "Truck broke down" }`
 **Driver change:** `{ "driverPhone": "+91...", "changeReason": "Original driver unavailable" }`
 
-| Status Flow | `PENDING` → `IN_TRANSIT` → `DELIVERED` → `COMPLETED` |
+| Status Flow | `CREATED` → `ASSIGNED` → `LOADED` → `IN_TRANSIT` → `DELIVERED` → `COMPLETED` |
 |---|---|
-| Cancel from | `PENDING` or `IN_TRANSIT` only |
+| Cancel from | `CREATED`, `ASSIGNED`, or `LOADED` only |
 
 ### `POST /trips/:tripId/load-cards` 🔒
 Source Mahajan creates the load card.
@@ -448,7 +423,10 @@ Source Mahajan creates the load card.
 ```
 
 ### `POST /trips/:tripId/receive-cards` 🔒
-Destination Mahajan confirms receipt. **Auto-creates a Ledger Entry.**
+Destination Mahajan confirms receipt.
+
+> ✅ **Auto-creates Invoice + LedgerEntry if items have rates.**
+
 ```json
 {
   "items": [
@@ -480,7 +458,7 @@ Destination Mahajan confirms receipt. **Auto-creates a Ledger Entry.**
 ## 10. GPS Tracking
 
 ### `POST /tracking/ping` 🔒 (Driver only)
-**Rate limit:** 10 req/min  
+**Rate limit:** 10 req/min
 Submit batched GPS pings.
 ```json
 {
@@ -506,11 +484,11 @@ Max 500 locations per batch.
 **Rate limit:** 30 req/min for all map endpoints.
 
 ### `GET /map/geocode/forward` 🔒
-Search text → locations.  
+Search text → locations.
 Query: `?q=Sambalpur Mandi&limit=5`
 
 ### `GET /map/geocode/reverse` 🔒
-Pin drop → address.  
+Pin drop → address.
 Query: `?lat=21.4669&lng=83.9812`
 
 ---
@@ -527,17 +505,68 @@ Create or get account between two orgs.
 All accounts for an org. Returns each account with `balance` and `advanceBalance` (both in paise).
 
 ### `GET /ledger/accounts/:accountId` 🔒
-### `GET /ledger/accounts/:accountId/timeline` 🔒
-Chronological timeline of all ledger entries. Each entry includes `transactionType`:
+**Ledger Summary** — use this to show the account balance header on the khata screen.
+```json
+{
+  "id": "clxyz...",
+  "ownerOrgId": "...",
+  "counterpartyOrgId": "...",
+  "balance": "150000",
+  "advanceBalance": "50000",
+  "ownerOrg": { "id": "...", "name": "Rajesh Traders" },
+  "counterpartyOrg": { "id": "...", "name": "Shaikh Co." }
+}
+```
+> `balance` = total outstanding in paise (₹1,500). `advanceBalance` = pre-paid advance not yet applied to any invoice (₹500).
+
+### `GET /ledger/accounts/:accountId/timeline?limit=50&offset=0` 🔒
+Chronological list of every financial event on this account. Each entry carries a **running balance**.
+
+**Full LedgerEntry object:**
+```json
+{
+  "id": "clentry...",
+  "accountId": "clacc...",
+  "direction": "RECEIVABLE",
+  "amount": "150000",
+  "balance": "150000",
+  "description": "Invoice TRIP-ABCD1234",
+  "transactionType": "TRIP",
+  "referenceType": "INVOICE",
+  "referenceId": "clinvoice...",
+  "tripId": "cltrip...",
+  "note": null,
+  "tag": null,
+  "createdAt": "2026-03-10T08:00:00.000Z"
+}
+```
+
+| Field | What it means |
+|---|---|
+| `direction` | `RECEIVABLE` = money owed TO you. `PAYABLE` = you owe money. |
+| `amount` | This transaction's amount in paise |
+| `balance` | Running account balance AFTER this entry in paise — use for the balance column in ledger UI |
+| `transactionType` | Why this entry was created (see table below) |
+| `referenceType` | What record caused it: `INVOICE`, `PAYMENT`, `ADVANCE_APPLIED` |
+| `referenceId` | ID of that record — use for deep-linking to invoice/payment detail |
 
 | `transactionType` | Meaning |
 |---|---|
-| `TRIP` | Auto-created from receive card |
+| `TRIP` | Auto-created when destination mahajan submits receive card |
 | `INVOICE` | Manually created invoice |
-| `PAYMENT` | Payment recorded |
-| `ADVANCE` | Advance payment |
-| `ADVANCE_APPLIED` | Advance auto-applied to invoice |
-| `ADJUSTMENT` | Manual correction |
+| `PAYMENT` | Payment confirmed (two-party or direct) |
+| `ADVANCE` | Advance payment recorded |
+| `ADVANCE_APPLIED` | Advance auto-deducted from a new invoice |
+| `ADJUSTMENT` | Manual correction entry |
+
+**Full response shape:**
+```json
+{
+  "entries": [ ...LedgerEntry[] ],
+  "account": { "balance": "150000", "advanceBalance": "0" },
+  "pagination": { "total": 45, "limit": 50, "offset": 0 }
+}
+```
 
 ---
 
@@ -560,9 +589,9 @@ Supports **itemized line items** with auto-calculation.
 }
 ```
 
-> **Auto-calc rule:** If `amount` is omitted but `items` are provided, the backend automatically calculates `total = Σ(quantity × rate)` and converts to paise.
+> **Auto-calc rule:** If `amount` is omitted but `items` have rates, backend automatically calculates `total = Σ(quantity × rate)` and converts to paise.
 
-**Response includes:** `total`, `paidAmount`, `dueAmount` (all in paise), `status` (`OPEN`, `PARTIAL`, `PAID`).
+**Response includes:** `total`, `paidAmount`, `dueAmount` (all in paise), `status` (`OPEN`, `PARTIAL`, `PAID`), `items[]`.
 
 ### `GET /ledger/accounts/:accountId/invoices` 🔒
 
@@ -573,13 +602,30 @@ Supports **itemized line items** with auto-calculation.
 
 ---
 
-## 14. Payments (Two-Party Flow)
+## 14. Payments
+
+> ⚠️ **There are two separate payment endpoints. Pick the right one.**
+
+| Situation | Use |
+|---|---|
+| UPI / bank transfer — both parties on the app — need confirmation | Two-party flow → `POST /ledger/payments/request` |
+| Cash in hand, mandi payment, no confirmation needed | Direct recording → `POST /ledger/payments` |
+
+**Key difference:** Direct recording updates the ledger immediately. Two-party flow only updates the ledger when the receiver confirms.
+
+---
+
+### Option A — Two-Party Flow (UPI / Bank Transfer)
 
 ```
-Step 1: Receiver creates request  → POST /ledger/payments/request
-Step 2: Sender marks as paid      → PATCH /ledger/payments/:paymentId  { status: "PAID", ... }
-Step 3: Receiver confirms/disputes → PATCH /ledger/payments/:paymentId  { status: "CONFIRMED" | "DISPUTED" }
+Step 1: Receiver creates request   → POST /ledger/payments/request
+Step 2: Sender marks as paid       → PATCH /ledger/payments/:paymentId { status: "PAID", ... }
+Step 3: Receiver confirms/disputes → PATCH /ledger/payments/:paymentId { status: "CONFIRMED" | "DISPUTED" }
 ```
+
+> 💡 **Ledger balance does NOT change until Step 3 CONFIRMED.** Until then it is just a claim.
+
+**Step 1 — Receiver creates payment request:**
 
 ### `POST /ledger/payments/request` 🔒
 ```json
@@ -587,6 +633,7 @@ Step 3: Receiver confirms/disputes → PATCH /ledger/payments/:paymentId  { stat
   "accountId": "clxyz...",
   "amount": 15000,
   "tag": "PARTIAL",
+  "mode": "UPI",
   "remarks": "For March invoice",
   "invoiceId": "clinv..."
 }
@@ -594,9 +641,12 @@ Step 3: Receiver confirms/disputes → PATCH /ledger/payments/:paymentId  { stat
 | `tag` values | `ADVANCE`, `PARTIAL`, `FINAL`, `OTHER` |
 |---|---|
 
+**Step 2 — Sender marks as paid / Step 3 — Receiver confirms or disputes:**
+
 ### `PATCH /ledger/payments/:paymentId` 🔒
-**Mark as paid (sender):**
+
 ```json
+// Sender marks paid:
 {
   "status": "PAID",
   "mode": "UPI",
@@ -604,27 +654,65 @@ Step 3: Receiver confirms/disputes → PATCH /ledger/payments/:paymentId  { stat
   "proofNote": "Paid via PhonePe",
   "attachmentIds": ["clxyz..."]
 }
+
+// Receiver confirms → ledger updates NOW:
+{ "status": "CONFIRMED" }
+
+// Receiver disputes → ledger unchanged:
+{ "status": "DISPUTED", "reason": "Amount mismatch" }
 ```
+
 | `mode` values | `UPI`, `BANK_TRANSFER`, `CASH`, `CHEQUE`, `OTHER` |
 |---|---|
 
-**Confirm (receiver):** `{ "status": "CONFIRMED" }`  
-**Dispute (receiver):** `{ "status": "DISPUTED", "reason": "Amount mismatch" }`
+**Payment status flow:**
+```
+PENDING → MARKED_AS_PAID → CONFIRMED  (ledger updates here)
+                         → DISPUTED   (no ledger change)
+```
 
-### `POST /ledger/payments` 🔒 (Legacy/Direct)
-Direct payment recording for cash transactions:
+---
+
+### Option B — Direct Recording (Cash / Mandi Payment)
+
+### `POST /ledger/payments` 🔒
+Use when cash is physically exchanged and no two-party confirmation is needed. **Ledger updates immediately.**
+
 ```json
 {
   "accountId": "clxyz...",
   "amount": 5000,
   "tag": "PARTIAL",
   "paymentMethod": "CASH",
-  "remarks": "Cash received at mandi"
+  "transactionId": "optional_ref",
+  "remarks": "Cash received at mandi gate",
+  "attachmentIds": []
 }
 ```
 
+> `paymentMethod` maps to the `mode` field in the response. Values: `UPI`, `BANK_TRANSFER`, `CASH`, `CHEQUE`, `OTHER`
+
+**Response `payment` object:**
+```json
+{
+  "id": "clpay...",
+  "accountId": "clacc...",
+  "amount": "500000",
+  "mode": "CASH",
+  "tag": "PARTIAL",
+  "status": "CONFIRMED",
+  "remarks": "Cash received at mandi gate",
+  "createdAt": "2026-03-10T08:00:00.000Z"
+}
+```
+
+---
+
+### Other payment endpoints
+
 ### `GET /ledger/accounts/:accountId/payments` 🔒
 ### `GET /ledger/accounts/:accountId/pending-payments` 🔒
+Returns payments with `status: PENDING` or `MARKED_AS_PAID` only — payments waiting for action.
 ### `GET /ledger/payments/:paymentId` 🔒
 
 ---
@@ -685,111 +773,102 @@ Server-to-server webhook — signature verified via `X-Razorpay-Signature` heade
 
 ## 16. Khata Contacts
 
-> For traders who don't use the app. An offline ledger per contact.
+> For traders who don't use the app. Think of it as a digital khata notebook.
 
 ### `POST /ledger/orgs/:orgId/contacts` 🔒
 ```json
-{
-  "name": "Ramesh Farmer",
-  "phone": "+919876543210",
-  "city": "Bargarh",
-  "notes": "Supplies tomatoes seasonally"
-}
+{ "name": "Ramesh Vegetables", "phone": "+919876543210", "city": "Azadpur", "notes": "Cash only" }
 ```
 
-### `GET /ledger/orgs/:orgId/contacts` 🔒
-List contacts with their current `balance` (paise). Pagination supported.
+### `GET /ledger/orgs/:orgId/contacts?page=1&limit=50` 🔒
+Returns contacts with their current `balance` (paise).
 
 ### `GET /ledger/contacts/:contactId` 🔒
 ### `PATCH /ledger/contacts/:contactId` 🔒
 ### `DELETE /ledger/contacts/:contactId` 🔒
 
 ### `POST /ledger/contacts/:contactId/entries` 🔒
-Record a sale/purchase/adjustment:
+Record a manual transaction.
 ```json
 {
   "direction": "RECEIVABLE",
-  "amount": 5000,
-  "description": "50 kg tomatoes @ ₹100/kg",
+  "amount": 2500,
+  "description": "Tomato supply 50kg",
   "transactionType": "SALE"
 }
 ```
-| `direction` | `PAYABLE` or `RECEIVABLE` |
+| `direction` | `RECEIVABLE` = they owe you, `PAYABLE` = you owe them |
 |---|---|
 | `transactionType` | `SALE`, `PURCHASE`, `ADJUSTMENT` |
 
-> Amount is in **rupees**.
-
 ### `POST /ledger/contacts/:contactId/payments` 🔒
+Record a cash/UPI payment against this contact.
 ```json
 {
-  "amount": 3000,
+  "amount": 1000,
   "mode": "CASH",
   "tag": "PARTIAL",
-  "remarks": "Cash received at mandi"
+  "remarks": "Paid at shop"
 }
 ```
 
 ### `GET /ledger/contacts/:contactId/timeline` 🔒
-Chronological timeline of entries + payments (like a chat UI).
+Chronological list of entries and payments. Use this to render the khata book UI.
 
 ---
 
 ## 17. Chat System
 
-> **Architecture:** One single chat thread per org pair. All conversations (trips, payments, text, media) flow through this thread.
+> **Architecture:** One chat thread per org pair. All trips, payments, invoices appear as cards inside this single conversation — like WhatsApp but with rich financial cards.
 
-### Thread Management
+### Threads
 
-**`POST /chat/threads`** 🔒 — Create or get thread
+**`POST /chat/threads`** 🔒
 ```json
-{ "counterpartyOrgId": "clabc..." }
+{ "counterpartyOrgId": "..." }
 ```
-Also accepts `accountId` or `tripId` to auto-resolve the org pair.
+Also accepts `{ "accountId": "..." }` or `{ "tripId": "..." }` — all resolve to the same org-pair thread.
 
-**`POST /chat/start-by-phone`** 🔒 — Start chat via phone number
+**`POST /chat/start-by-phone`** 🔒
 ```json
 { "phone": "+919876543210" }
 ```
+Add Mahajan flow — starts chat by phone number.
 
-**`GET /chat/threads`** 🔒 — List all threads  
-**`GET /chat/threads/:threadId`** 🔒 — Get thread details
+**`GET /chat/threads`** 🔒
+**`GET /chat/threads/:threadId`** 🔒
 
-**`PATCH /chat/threads/:threadId`** 🔒 — Update state
+**`PATCH /chat/threads/:threadId`** 🔒
+Unified endpoint — handles pin, archive, and read/delivery receipts:
 ```json
-{
-  "isPinned": true,
-  "isArchived": false,
-  "readUpTo": "message_id_xxx",
-  "deliveredUpTo": "message_id_xxx"
-}
+{ "isPinned": true }
+{ "isArchived": false }
+{ "readUpTo": "messageId" }
+{ "deliveredUpTo": "messageId" }
 ```
-At least one field required.
+
+> ⚠️ **Read Receipt Rule:** Only call `readUpTo` when the chat screen is **open and the user is actively viewing it**. Never call it on background fetches, notification handling, or list views. This is what triggers the blue tick on the sender's side.
 
 ### Messages
 
-**`GET /chat/threads/:threadId/messages`** 🔒 — Paginated messages  
-**`POST /chat/threads/:threadId/messages`** 🔒 — Send message
-```json
-{
-  "content": "Hello, sending the tomatoes today",
-  "messageType": "TEXT",
-  "replyToId": "cl_original_msg_id",
-  "clientMessageId": "uuid-for-idempotency",
-  "tripId": "cl_trip_id"
-}
-```
-| `messageType` | Required fields |
-|---|---|
-| `TEXT` | `content` (non-empty) |
-| `IMAGE`, `PDF`, `FILE`, `AUDIO` | `attachmentIds` (at least 1) |
-| `LOCATION` | `locationLat`, `locationLng` |
+**`GET /chat/threads/:threadId/messages?limit=50&offset=0`** 🔒
+Returns messages oldest-first. Excludes deleted messages.
 
-**`PATCH /chat/threads/:threadId/messages/:messageId`** 🔒 — Edit message
+**`POST /chat/threads/:threadId/messages`** 🔒
 ```json
-{ "content": "Updated message text" }
+{ "content": "Hello", "messageType": "TEXT" }
+{ "messageType": "IMAGE", "attachmentIds": ["clfile..."] }
+{ "messageType": "PDF", "attachmentIds": ["clfile..."] }
+{ "messageType": "AUDIO", "attachmentIds": ["clfile..."] }
+{ "messageType": "LOCATION", "locationLat": 19.076, "locationLng": 72.877 }
 ```
-> Only TEXT messages, within 15 minutes, by original sender.
+Any message can also include `"tripId": "..."` to link it to a specific trip.
+
+**`PATCH /chat/threads/:threadId/messages/:messageId`** 🔒
+Edit text message. Sender only. Within 15 minutes.
+```json
+{ "content": "corrected text" }
+```
 
 **`DELETE /chat/threads/:threadId/messages/:messageId`** 🔒
 ```json
@@ -800,10 +879,10 @@ At least one field required.
 
 ### Media
 
-**`GET /chat/threads/:threadId/media-preview`** 🔒  
+**`GET /chat/threads/:threadId/media-preview`** 🔒
 Media counts + thumbnails for "Chat Info" screen.
 
-**`GET /chat/threads/:threadId/media`** 🔒  
+**`GET /chat/threads/:threadId/media`** 🔒
 Paginated gallery: `?type=images|docs|all&limit=30&cursor=xxx`
 
 ### Block / Clear / Delete
@@ -817,7 +896,7 @@ Paginated gallery: `?type=images|docs|all&limit=30&cursor=xxx`
 
 ### Search & Unread
 
-**`GET /chat/unread`** 🔒 — Unread counts per thread  
+**`GET /chat/unread`** 🔒 — Unread counts per thread
 **`GET /chat/messages?orgId=xxx&q=payment`** 🔒 — Search messages across threads
 
 ### Rich Actions (Chat Actions)
@@ -925,9 +1004,6 @@ The backend sends FCM push notifications for these events:
 | 7 days | Send reminder |
 | 8–13 days | Skip |
 | 14 days | Send reminder |
-| 15–20 days | Skip |
-| 21 days | Send reminder (14 + 7) |
-| 28 days | Send reminder (14 + 14) |
 | Every 7 days after 14 | Send reminder |
 
 ### Notification Payload
@@ -976,7 +1052,7 @@ const socket = io('{{API_URL}}', {
 | `account:join` | `{ accountId }` | `account:joined` |
 | `account:leave` | `{ accountId }` | `account:left` |
 
-> **Note:** Joining a `chat:` room auto-marks unread messages as **delivered**.
+> **Note:** Joining a `chat:` room auto-marks unread messages as **delivered** (double grey tick). The blue tick (read) only fires when you explicitly call `PATCH /chat/threads/:id { "readUpTo": "..." }`.
 
 ### Listening for Events
 
@@ -994,11 +1070,31 @@ socket.on('chat:message', (data) => { /* full message object */ });
 socket.on('chat:delivered', (data) => { /* { threadId, userId, deliveredAt, count } */ });
 
 // Read receipts (blue tick)
-socket.on('chat:read', (data) => { /* { threadId, userId, readAt } */ });
+socket.on('chat:read', (data) => { /* { threadId, userId, readAt, count } */ });
+
+// Message edited
+socket.on('chat:edit', (data) => { /* updated message object */ });
+
+// Message deleted for everyone
+socket.on('chat:delete', (data) => { /* { messageId, deletedFor, deletedByUserId } */ });
+
+// Thread blocked/unblocked
+socket.on('chat:blocked', (data) => { /* { blockedByOrgId, blockedAt } */ });
+socket.on('chat:unblocked', (data) => { /* { threadId } */ });
 
 // Errors
 socket.on('error', (data) => { /* { message } */ });
 ```
+
+### Read Receipt Logic (WhatsApp-style)
+
+| Tick | Meaning | Triggered by |
+|---|---|---|
+| ✓ grey | Sent | Message saved in DB |
+| ✓✓ grey | Delivered to device | Receiver calls `chat:join` via socket |
+| ✓✓ blue | Receiver read it | Frontend calls `PATCH /chat/threads/:id { readUpTo: lastMsgId }` |
+
+> **Frontend responsibility:** Call `readUpTo` only when the chat screen is open and visible. Not on background syncs, not on list views, not in notification handlers.
 
 ---
 
@@ -1066,5 +1162,5 @@ Used across Org, Trip, and other endpoints:
 
 ---
 
-> 🔒 = Requires `Authorization: Bearer <accessToken>` header  
+> 🔒 = Requires `Authorization: Bearer <accessToken>` header
 > ⚡ = Public endpoint (no auth)

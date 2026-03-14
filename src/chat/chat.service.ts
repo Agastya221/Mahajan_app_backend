@@ -536,37 +536,6 @@ export class ChatService {
 
     const total = await prisma.chatMessage.count({ where: whereClause });
 
-    // ✅ AUTO-MARK AS READ: When user opens a chat and fetches messages,
-    // mark all unread messages from OTHER users as read (like WhatsApp).
-    // This runs in the background — don't block the response.
-    const markReadPromise = prisma.chatMessage.updateMany({
-      where: {
-        threadId,
-        senderUserId: { not: null },
-        NOT: { senderUserId: userId },
-        isRead: false,
-        isDeletedForEveryone: false,
-      },
-      data: { isRead: true, readAt: new Date() },
-    });
-
-    markReadPromise
-      .then((result) => {
-        if (result.count > 0) {
-          // Broadcast read receipt so sender sees blue ticks
-          try {
-            if ((global as any).socketGateway) {
-              (global as any).socketGateway.broadcastToChat(threadId, 'chat:read', {
-                userId, readAt: new Date(), count: result.count,
-              });
-            }
-          } catch (err) {
-            console.error('Failed to broadcast auto-read receipt:', err);
-          }
-        }
-      })
-      .catch((err) => console.error('Failed to auto-mark messages as read:', err));
-
     return {
       messages: messages.reverse(),
       pagination: {
